@@ -8,6 +8,7 @@ mod embedding;
 mod llm;
 mod hnsw;
 mod flow;
+mod decimal;
 
 // Re-export public API
 pub use app::App;
@@ -17,6 +18,7 @@ pub use llm::LlmClient;
 pub use hnsw::HnswMemoryIndex;
 pub use ledger::Ledger;
 pub use flow::{TransactionFlow, FlowStep, ExecutionResult, FlowComposer, FlowExecutor, parse_transaction_flow};
+pub use decimal::{parse_decimal_amount, format_decimal_amount, format_amount_for_llm, parse_amount_from_llm, format_amount_for_display, DECIMAL_PLACES, DECIMAL_FACTOR};
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

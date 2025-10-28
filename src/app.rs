@@ -7,6 +7,7 @@ use crate::hnsw::HnswMemoryIndex;
 use crate::ledger::Ledger;
 use crate::llm::LlmClient;
 use crate::queries::Queries;
+use crate::decimal::{format_amount_for_display};
 
 pub struct App {
     pub ledger: Ledger,
@@ -50,15 +51,15 @@ impl App {
     pub fn get_balance(&self, asset_id: &str) -> u128 {
         trace!("💰 Getting balance for asset: {}", asset_id);
         let balance = self.ledger.get_balance(&asset_id.to_string());
-        debug!("💰 Balance for {}: {}", asset_id, balance);
+        debug!("💰 Balance for {}: {} (internal: {})", asset_id, format_amount_for_display(balance), balance);
         balance
     }
 
     pub fn set_balance(&mut self, asset_id: &str, amount: u128) {
-        info!("💰 Setting balance for {}: {} (2 decimal places)", asset_id, amount);
-        debug!("💰 Previous balance: {}", self.get_balance(asset_id));
+        info!("💰 Setting balance for {}: {} (internal: {})", asset_id, format_amount_for_display(amount), amount);
+        debug!("💰 Previous balance: {} (internal: {})", format_amount_for_display(self.get_balance(asset_id)), self.get_balance(asset_id));
         self.ledger.set_balance(asset_id.to_string(), amount);
-        debug!("💰 New balance: {}", self.get_balance(asset_id));
+        debug!("💰 New balance: {} (internal: {})", format_amount_for_display(self.get_balance(asset_id)), self.get_balance(asset_id));
         trace!("✅ Balance updated successfully");
     }
 

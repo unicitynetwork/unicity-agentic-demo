@@ -6,6 +6,7 @@
 use tracing::{info, debug, trace, warn, error};
 use crate::ledger::Ledger;
 use crate::executor::exec_local;
+use crate::decimal::{format_amount_for_display, format_amount_for_llm, DECIMAL_PLACES};
 use super::{ExecutionResult, StepResult};
 use crate::flow::composer::{ComposedFlow, ComposedStep};
 
@@ -113,6 +114,7 @@ impl FlowExecutor {
                         input_data["amount"] = serde_json::Value::Number(
                             serde_json::Number::from(amount as i64)
                         );
+                        debug!("💰 Converted previous output: {} -> {} (internal)", extracted, amount);
                     }
                 } else {
                     warn!("⚠️  Could not extract amount from previous output");
@@ -160,14 +162,22 @@ impl FlowExecutor {
 
         // If output is a number, return it (this is the key fix for swap outputs)
         if let Some(n) = output.as_u64() {
-            debug!("💰 Found number output: {}", n);
-            return Some(n.to_string());
+            debug!("💰 Found number output: {} (internal u128 representation)", n);
+            // Convert to decimal format for display/logging
+            let amount_u128 = n as u128;
+            let display_amount = format_amount_for_display(amount_u128);
+            debug!("💰 Formatted for display: {} -> {}", amount_u128, display_amount);
+            return Some(amount_u128.to_string());
         }
 
         // Also check for i64 numbers (JSON numbers can be i64)
         if let Some(n) = output.as_i64() {
-            debug!("💰 Found i64 number output: {}", n);
-            return Some(n.to_string());
+            debug!("💰 Found i64 number output: {} (internal u128 representation)", n);
+            // Convert to decimal format for display/logging
+            let amount_u128 = n as u128;
+            let display_amount = format_amount_for_display(amount_u128);
+            debug!("💰 Formatted for display: {} -> {}", amount_u128, display_amount);
+            return Some(amount_u128.to_string());
         }
 
         warn!("⚠️  Could not extract amount from output");

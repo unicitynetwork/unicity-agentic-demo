@@ -11,6 +11,7 @@ use crate::embedding::Embedding;
 use crate::queries::Queries;
 use crate::models::Method;
 use crate::llm::LlmClient;
+use crate::decimal::{format_amount_for_llm, parse_amount_from_llm, DECIMAL_PLACES};
 use super::{TransactionFlow, FlowStep, ExecutionResult, StepResult, MethodCandidate, MethodApprovalRequest, MethodApprover, ApprovalError};
 
 /// Errors that can occur during flow composition
@@ -302,11 +303,16 @@ impl FlowComposer {
                 Ok(serde_json::json!({"amount": "user_specified"}))
             }
             amount_str => {
-                // Try to parse as number
-                if let Ok(amount) = amount_str.parse::<u128>() {
-                    Ok(serde_json::json!({"amount": amount}))
-                } else {
-                    Ok(serde_json::json!({"amount": amount_str}))
+                // Try to parse as decimal amount from LLM
+                match parse_amount_from_llm(amount_str) {
+                    Ok(amount_u128) => {
+                        debug!("💰 Parsed amount from LLM: {} -> {}", amount_str, amount_u128);
+                        Ok(serde_json::json!({"amount": amount_u128}))
+                    }
+                    Err(e) => {
+                        debug!("⚠️  Could not parse amount '{}' as decimal: {}, using as string", amount_str, e);
+                        Ok(serde_json::json!({"amount": amount_str}))
+                    }
                 }
             }
         }

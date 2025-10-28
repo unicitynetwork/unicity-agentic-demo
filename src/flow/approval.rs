@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn, error};
 use crate::llm::LlmClient;
 use crate::models::Method;
+use crate::decimal::{DECIMAL_PLACES};
 
 /// A candidate method with similarity score and reasoning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,7 +132,9 @@ impl MethodApprover {
     /// Create the LLM prompt for method approval
     fn create_approval_prompt(&self, request: &MethodApprovalRequest) -> String {
         format!(r#"
-You are a method selection specialist for a financial transaction system. 
+You are a method selection specialist for a financial transaction system.
+
+IMPORTANT: All amounts in this system use {} decimal places internally. When you see amounts in the user query, they represent precise decimal values.
 
 ORIGINAL USER QUERY: "{}"
 CURRENT STEP INTENT: "{}"
@@ -148,26 +151,30 @@ TASK: Select the MOST appropriate method for this specific step. Consider:
 3. Semantic meaning of the action
 4. Method descriptions and labels
 5. Method export names and patterns
+6. Amount precision - amounts use {} decimal places internally
 
 For swap operations, pay special attention to:
 - "swap X to Y" means method should be "swap_x_to_y"
-- "convert X to Y" means method should be "swap_x_to_y" 
+- "convert X to Y" means method should be "swap_x_to_y"
 - Direction matters: USDT to NEAR ≠ NEAR to USDT
+- Amounts like "0.5" represent 0.50000000 internally
 
 Respond with JSON only (no code blocks):
 {{
   "selected_method_id": "method_id_here",
-  "selected_method_export": "exact_method_export_name", 
-  "reasoning": "Clear explanation of why this method matches the user's intent, especially direction",
+  "selected_method_export": "exact_method_export_name",
+  "reasoning": "Clear explanation of why this method matches the user's intent, especially direction and amount handling",
   "confidence": 0.95,
   "alternative_suggestions": ["other_method_if_relevant"]
 }}
 "#,
+            DECIMAL_PLACES,
             request.original_query,
             request.step_intent,
             request.expected_pattern.as_deref().unwrap_or("none"),
             self.format_candidates(&request.candidates),
-            request.flow_context.as_deref().unwrap_or("No additional context")
+            request.flow_context.as_deref().unwrap_or("No additional context"),
+            DECIMAL_PLACES
         )
     }
 

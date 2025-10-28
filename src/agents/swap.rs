@@ -166,37 +166,37 @@ define_swaps! {
     ledger_ty = Ledger;
 
     (alpha, "ALPHA") => {
-        fn swap_alpha_to_usdt (usdt, "USDT"): { num: 300u128,     den: 100u128     },
-        fn swap_alpha_to_btc  (btc,  "BTC") : { num: 300u128,     den: 11476500u128 },
-        fn swap_alpha_to_eth  (eth,  "ETH") : { num: 300u128,     den: 411438u128  },
-        fn swap_alpha_to_near (near, "NEAR"): { num: 300u128,     den: 230u128     },
+        fn swap_alpha_to_usdt (usdt, "USDT"): { num: 300_000_000u128,        den: 100_000_000u128        }, // 1 ALPHA = 3.00000000 USDT
+        fn swap_alpha_to_btc  (btc,  "BTC") : { num: 300_000_000u128,        den: 11_476_500_000_000u128 }, // ≈ 0.00002614037380 BTC
+        fn swap_alpha_to_eth  (eth,  "ETH") : { num: 300_000_000u128,        den: 411_438_000_000u128    }, // ≈ 0.00072914995698 ETH
+        fn swap_alpha_to_near (near, "NEAR"): { num: 300_000_000u128,        den: 230_000_000u128        }, // ≈ 1.30434782609 NEAR
     },
 
     (usdt, "USDT") => {
-        fn swap_usdt_to_alpha (alpha, "ALPHA"): { num: 100u128,      den: 300u128    },
-        fn swap_usdt_to_btc   (btc,   "BTC")  : { num: 100u128,      den: 11476500u128 },
-        fn swap_usdt_to_eth   (eth,   "ETH")  : { num: 100u128,      den: 411438u128 },
-        fn swap_usdt_to_near  (near,  "NEAR") : { num: 100u128,      den: 230u128    },
+        fn swap_usdt_to_alpha (alpha, "ALPHA"): { num: 100_000_000u128,        den: 300_000_000u128       }, // ≈ 0.33333333333 ALPHA
+        fn swap_usdt_to_btc   (btc,   "BTC")  : { num: 100_000_000u128,        den: 11_476_500_000_000u128}, // ≈ 0.00000871345794 BTC
+        fn swap_usdt_to_eth   (eth,   "ETH")  : { num: 100_000_000u128,        den: 411_438_000_000u128   }, // ≈ 0.00024304998566 ETH
+        fn swap_usdt_to_near  (near,  "NEAR") : { num: 100_000_000u128,        den: 230_000_000u128       }, // ≈ 0.43478260870 NEAR
     },
 
     (btc, "BTC") => {
-        fn swap_btc_to_usdt  (usdt, "USDT"): { num: 11476500u128, den: 100u128    },
-        fn swap_btc_to_eth   (eth,  "ETH") : { num: 11476500u128, den: 411438u128 },
-        fn swap_btc_to_alpha (alpha,"ALPHA"): { num: 11476500u128, den: 300u128   },
-        fn swap_btc_to_near  (near, "NEAR"): { num: 11476500u128, den: 230u128   },
+        fn swap_btc_to_usdt  (usdt, "USDT"): { num: 11_476_500_000_000u128, den: 100_000_000u128        }, // 1 BTC = 114,765.00000000 USDT
+        fn swap_btc_to_eth   (eth,  "ETH") : { num: 11_476_500_000_000u128, den: 411_438_000_000u128    }, // ≈ 27.89363160428 ETH
+        fn swap_btc_to_alpha (alpha,"ALPHA"): { num: 11_476_500_000_000u128, den: 300_000_000u128       }, // ≈ 38,255.00000000 ALPHA
+        fn swap_btc_to_near  (near, "NEAR"): { num: 11_476_500_000_000u128, den: 230_000_000u128       }, // ≈ 49,897.82608696 NEAR
     },
 
     (eth, "ETH") => {
-        fn swap_eth_to_usdt  (usdt, "USDT"): { num: 411438u128,   den: 100u128    },
-        fn swap_eth_to_btc   (btc,  "BTC") : { num: 411438u128,   den: 11476500u128 },
-        fn swap_eth_to_alpha (alpha,"ALPHA"): { num: 411438u128,   den: 300u128    },
-        fn swap_eth_to_near  (near, "NEAR"): { num: 411438u128,   den: 230u128    },
+        fn swap_eth_to_usdt  (usdt, "USDT"): { num: 411_438_000_000u128,    den: 100_000_000u128        }, // 1 ETH = 4,114.38000000 USDT
+        fn swap_eth_to_btc   (btc,  "BTC") : { num: 411_438_000_000u128,    den: 11_476_500_000_000u128 }, // ≈ 0.03585047706 BTC
+        fn swap_eth_to_alpha (alpha,"ALPHA"): { num: 411_438_000_000u128,    den: 300_000_000u128       }, // ≈ 1,371.46000000 ALPHA
+        fn swap_eth_to_near  (near, "NEAR"): { num: 411_438_000_000u128,    den: 230_000_000u128       }, // ≈ 1,788.86086957 NEAR
     },
 
     (near, "NEAR") => {
-        fn swap_near_to_usdt (usdt, "USDT"): { num: 230u128,      den: 100u128    },
-        fn swap_near_to_alpha(alpha,"ALPHA"): { num: 230u128,      den: 300u128    },
-        fn swap_near_to_eth  (eth,  "ETH") : { num: 230u128,      den: 411438u128 },
-        fn swap_near_to_btc  (btc,  "BTC") : { num: 230u128,      den: 11476500u128 },
+        fn swap_near_to_usdt (usdt, "USDT"): { num: 230_000_000u128,        den: 100_000_000u128        }, // 1 NEAR = 2.30000000 USDT
+        fn swap_near_to_alpha(alpha,"ALPHA"): { num: 230_000_000u128,        den: 300_000_000u128       }, // ≈ 0.76666666667 ALPHA
+        fn swap_near_to_eth  (eth,  "ETH") : { num: 230_000_000u128,        den: 411_438_000_000u128   }, // ≈ 0.00055901497 ETH
+        fn swap_near_to_btc  (btc,  "BTC") : { num: 230_000_000u128,        den: 11_476_500_000_000u128}, // ≈ 0.00002004095 BTC
     },
 }

@@ -6,8 +6,21 @@ use tracing::{info, error, warn, debug, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::{
     App, LlmClient, Queries, Embedding, HnswMemoryIndex,
-    FlowComposer, FlowExecutor, parse_transaction_flow
+    FlowComposer, FlowExecutor, parse_transaction_flow,
+    format_amount_for_display, format_amount_for_llm, DECIMAL_FACTOR
 };
+
+/// Format amount with proper decimal places for display
+pub fn format_amount(amount: u128, decimals: u32) -> String {
+    if decimals == 0 {
+        return amount.to_string();
+    }
+    let divisor = 10u128.pow(decimals);
+    let whole = amount / divisor;
+    let frac  = amount % divisor;
+    // pad the fractional part with leading zeros up to `decimals` width
+    format!("{whole}.{frac:0>width$}", width = decimals as usize)
+}
 
 #[derive(Parser)]
 #[command(name = "unicity-demo")]
@@ -59,10 +72,10 @@ async fn main() -> Result<(), anyhow::Error> {
     info!("🏗️ Initializing application");
     let mut app = App::new(db, llm_client.api_key.clone())?;
     
-    // 💰 Initialize ledger with 100,000 USDT
+    // 💰 Initialize ledger with 100,000 USDT (8 decimal places)
     info!("💰 Initializing ledger with 100,000 USDT");
-    app.set_balance("USDT", 100_000_00); // 2 decimal places: 100,000.00 USDT
-    info!("✅ Ledger initialized: {} USDT", app.get_balance("USDT") / 100);
+    app.set_balance("USDT", 100_000 * DECIMAL_FACTOR); // 8 decimal places: 100,000.00000000 USDT
+    info!("✅ Ledger initialized: {} USDT", format_amount_for_display(app.get_balance("USDT")));
 
     // 🤖 Register agents
     info!("🤖 Registering agents in knowledge graph");
@@ -125,7 +138,7 @@ async fn start_interactive_demo(
     hnsw_index: &mut HnswMemoryIndex<'_>,
 ) -> Result<(), anyhow::Error> {
     println!("\n🎉 Unicity Agentic Demo Ready!");
-    println!("💰 Available balance: {} USDT", app.get_balance("USDT") / 100);
+    println!("💰 Available balance: {} USDT", format_amount_for_display(app.get_balance("USDT")));
     println!("\n📝 Enter your query (or 'quit' to exit):");
     
     loop {
@@ -230,10 +243,17 @@ async fn generate_execution_summary(
 You are explaining transaction execution results to a user.
 Provide a natural, clear explanation of what happened.
 
+IMPORTANT: All amounts in this system use 8 decimal places internally. When explaining amounts to users, use human-readable decimal format (e.g., "100" instead of "100.00000000", "0.5" instead of "0.50000000").
+
 EXECUTION RESULTS: {}
 ORIGINAL QUERY: "{}"
 
 Explain in natural tone what was accomplished, including any intermediate steps and final outcomes.
+When mentioning amounts, format them in a user-friendly way:
+- Use "100" instead of "100.00000000"
+- Use "0.5" instead of "0.50000000"
+- Use "1.23456789" for amounts with non-zero fractional parts
+
 Be concise but comprehensive."#, execution_json, original_query);
 
     let response = llm_client.generate_response(&prompt).await;

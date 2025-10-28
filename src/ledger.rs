@@ -1,8 +1,9 @@
 use tracing::{trace, debug, warn};
+use crate::decimal::format_amount_for_display;
 
 pub type AssetId = String;
 
-// Note for example, we are using 2 decimals for everything.
+// Note for example, we are using 8 decimals for everything.
 #[derive(Debug, Clone)]
 pub struct Ledger {
     pub balances: Vec<(AssetId, u128)>,
@@ -22,7 +23,7 @@ impl Ledger {
         trace!("💰 Querying balance for asset: {}", asset_id);
         for (id, balance) in &self.balances {
             if id == asset_id {
-                debug!("💰 Found balance for {}: {} (2 decimal places)", asset_id, balance);
+                debug!("💰 Found balance for {}: {} (internal: {})", asset_id, format_amount_for_display(*balance), balance);
                 return *balance;
             }
         }
@@ -31,27 +32,32 @@ impl Ledger {
     }
 
     pub fn set_balance(&mut self, asset_id: AssetId, amount: u128) {
-        trace!("💰 Setting balance for {}: {}", asset_id, amount);
+        trace!("💰 Setting balance for {}: {} (internal: {})", asset_id, format_amount_for_display(amount), amount);
         for (id, balance) in &mut self.balances {
             if id == &asset_id {
-                debug!("💰 Updating existing balance for {}: {} -> {}", asset_id, balance, amount);
+                debug!("💰 Updating existing balance for {}: {} -> {} (internal: {} -> {})",
+                    asset_id, format_amount_for_display(*balance), format_amount_for_display(amount), balance, amount);
                 *balance = amount;
                 return;
             }
         }
-        debug!("💰 Adding new balance entry for {}: {}", asset_id, amount);
+        debug!("💰 Adding new balance entry for {}: {} (internal: {})", asset_id, format_amount_for_display(amount), amount);
         self.balances.push((asset_id, amount));
     }
 
     pub fn debit(&mut self, asset_id: &str, amount: u128) {
-        trace!("💳 Debiting {} from asset: {}", amount, asset_id);
+        trace!("💳 Debiting {} from asset: {} (internal: {})", format_amount_for_display(amount), asset_id, amount);
         for (id, balance) in &mut self.balances {
             if id == asset_id {
                 if *balance >= amount {
-                    debug!("💳 Debiting {} from {}: {} -> {}", amount, asset_id, balance, *balance - amount);
-                    *balance -= amount;
+                    let new_balance = *balance - amount;
+                    debug!("💳 Debiting {} from {}: {} -> {} (internal: {} -> {} -> {})",
+                        format_amount_for_display(amount), asset_id, format_amount_for_display(*balance),
+                        format_amount_for_display(new_balance), balance, amount, new_balance);
+                    *balance = new_balance;
                 } else {
-                    warn!("⚠️  Insufficient balance for debit {}: have {}, need {}", asset_id, balance, amount);
+                    warn!("⚠️  Insufficient balance for debit {}: have {}, need {} (internal: {} -> {})",
+                        asset_id, format_amount_for_display(*balance), format_amount_for_display(amount), balance, amount);
                     debug!("💳 Setting balance to 0 for {} (insufficient funds)", asset_id);
                     *balance = 0;
                 }
@@ -62,15 +68,18 @@ impl Ledger {
     }
 
     pub fn credit(&mut self, asset_id: &str, amount: u128) {
-        trace!("💳 Crediting {} to asset: {}", amount, asset_id);
+        trace!("💳 Crediting {} to asset: {} (internal: {})", format_amount_for_display(amount), asset_id, amount);
         for (id, balance) in &mut self.balances {
             if id == asset_id {
-                debug!("💳 Crediting {} to {}: {} -> {}", amount, asset_id, balance, *balance + amount);
-                *balance += amount;
+                let new_balance = *balance + amount;
+                debug!("💳 Crediting {} to {}: {} -> {} (internal: {} -> {} -> {})",
+                    format_amount_for_display(amount), asset_id, format_amount_for_display(*balance),
+                    format_amount_for_display(new_balance), balance, amount, new_balance);
+                *balance = new_balance;
                 return;
             }
         }
-        debug!("💳 Adding new balance entry for {}: {}", asset_id, amount);
+        debug!("💳 Adding new balance entry for {}: {} (internal: {})", asset_id, format_amount_for_display(amount), amount);
         self.balances.push((asset_id.to_string(), amount));
     }
 }

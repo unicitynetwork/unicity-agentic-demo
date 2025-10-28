@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{info, debug, trace, warn, error};
 use crate::llm::LlmClient;
+use crate::decimal::{format_amount_for_llm, parse_amount_from_llm, DECIMAL_PLACES};
 
 /// Transaction flow parsed from natural language query
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +71,8 @@ fn create_transaction_prompt(query: &str) -> String {
     format!(r#"
 You are a transaction flow analyzer for a multi-agent financial system. Parse user queries into executable transaction pipelines. Respond with JSON NOT in a code block.
 
+IMPORTANT: All amounts use {} decimal places internally. When parsing amounts, preserve the exact decimal format provided by the user.
+
 TOOL: "transaction_flow"
 
 INPUT: "{}"
@@ -83,8 +86,8 @@ INPUT: "{}"
       "step": 1,
       "action": "swap|ping|check_balance",
       "from_asset": "asset_symbol",
-      "to_asset": "asset_symbol", 
-      "amount": "number or 'previous_output'",
+      "to_asset": "asset_symbol",
+      "amount": "decimal_number or 'previous_output' or 'user_specified'",
       "semantic_hook": "detailed description for semantic matching",
       "method_pattern": "expected_method_name_pattern"
     }}
@@ -101,7 +104,7 @@ INPUT: "{}"
 
 **ASSET MAPPING** - Map common aliases:
 - USDT, Tether, stablecoin → USDT
-- BTC, Bitcoin → BTC  
+- BTC, Bitcoin → BTC
 - ETH, Ethereum → ETH
 - NEAR, Near Protocol → NEAR
 - ALPHA → ALPHA
@@ -118,9 +121,11 @@ INPUT: "{}"
 - balance → "check_balance"
 
 **AMOUNT HANDLING**:
-- Explicit amounts: "swap 1000 USDT" → amount: "1000"
+- Explicit amounts: "swap 1000 USDT" → amount: "1000.00000000"
+- Explicit decimals: "swap 1000.5 USDT" → amount: "1000.50000000"
 - Implicit amounts: "swap USDT to BTC" → amount: "user_specified"
 - Chained amounts: "then to BTC" → amount: "previous_output"
+- ALWAYS preserve decimal precision: "0.5" → "0.50000000", "1.23456789" → "1.23456789"
 
 EXAMPLES:
 
@@ -134,13 +139,13 @@ Input: "I want to swap 500 USDT to NEAR then to BTC"
       "action": "swap",
       "from_asset": "USDT",
       "to_asset": "NEAR",
-      "amount": "500",
-      "semantic_hook": "convert 500 USDT stablecoin to NEAR cryptocurrency tokens",
+      "amount": "500.00000000",
+      "semantic_hook": "convert 500.00000000 USDT stablecoin to NEAR cryptocurrency tokens",
       "method_pattern": "swap_usdt_to_near"
     }},
     {{
       "step": 2,
-      "action": "swap", 
+      "action": "swap",
       "from_asset": "NEAR",
       "to_asset": "BTC",
       "amount": "previous_output",
@@ -148,7 +153,25 @@ Input: "I want to swap 500 USDT to NEAR then to BTC"
       "method_pattern": "swap_near_to_btc"
     }}
   ],
-  "expected_outcome": "500 USDT converted to NEAR then to BTC"
+  "expected_outcome": "500.00000000 USDT converted to NEAR then to BTC"
+}}
+
+Input: "swap 0.5 USDT to BTC"
+{{
+  "tool": "transaction_flow",
+  "intent": "User wants to convert 0.5 USDT stablecoin to Bitcoin cryptocurrency",
+  "pipeline": [
+    {{
+      "step": 1,
+      "action": "swap",
+      "from_asset": "USDT",
+      "to_asset": "BTC",
+      "amount": "0.50000000",
+      "semantic_hook": "convert 0.50000000 USDT stablecoin to Bitcoin cryptocurrency",
+      "method_pattern": "swap_usdt_to_btc"
+    }}
+  ],
+  "expected_outcome": "0.50000000 USDT converted to BTC"
 }}
 
 Input: "ping the system"
@@ -176,7 +199,8 @@ RULES:
 - Handle amount propagation through chains
 - Be explicit about asset conversions
 - Use financial terminology for semantic richness
-- Respond with JSON only, no code blocks"#, query)
+- PRESERVE DECIMAL PRECISION: Always format amounts with {} decimal places
+- Respond with JSON only, no code blocks"#, DECIMAL_PLACES, query, DECIMAL_PLACES)
 }
 
 /// Extract JSON from LLM response (handles potential markdown code blocks)
