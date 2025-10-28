@@ -10,26 +10,65 @@ use crate::hnsw::HnswMemoryIndex;
 use crate::embedding::Embedding;
 use crate::queries::Queries;
 use crate::models::Method;
-use super::{TransactionFlow, FlowStep, ExecutionResult, StepResult};
+use crate::llm::LlmClient;
+use super::{TransactionFlow, FlowStep, ExecutionResult, StepResult, MethodCandidate, MethodApprovalRequest, MethodApprover, ApprovalError};
+
+/// Errors that can occur during flow composition
+#[derive(Debug, thiserror::Error)]
+pub enum CompositionError {
+    #[error("Method selection failed for step {step} with pattern '{pattern}': {reason}")]
+    MethodSelectionFailed { step: usize, pattern: String, reason: String },
+    
+    #[error("Embedding generation failed: {0}")]
+    EmbeddingFailed(#[from] crate::embedding::EmbeddingError),
+    
+    #[error("Database query failed: {0}")]
+    DatabaseFailed(#[from] anyhow::Error),
+    
+    #[error("LLM approval failed: {0}")]
+    ApprovalFailed(#[from] ApprovalError),
+}
 
 /// Flow composer for building executable transaction pipelines
 pub struct FlowComposer {
     queries: Arc<Queries>,
     embedding: Arc<Embedding>,
-    // hnsw_index: Arc<HnswMemoryIndex<'static>>,
+    method_approver: MethodApprover,
+    similarity_threshold: f32,
+    ambiguity_threshold: f32,
 }
 
 impl FlowComposer {
     pub fn new(
         queries: Arc<Queries>,
         embedding: Arc<Embedding>,
-        // hnsw_index: Arc<HnswMemoryIndex<'static>>,
+        llm_client: LlmClient,
     ) -> Self {
-        info!("🎼 Creating flow composer");
+        info!("🎼 Creating flow composer with LLM approval");
         Self {
             queries,
             embedding,
-            // hnsw_index,
+            method_approver: MethodApprover::new(llm_client),
+            similarity_threshold: 0.7,
+            ambiguity_threshold: 0.1,
+        }
+    }
+
+    /// Create composer with custom thresholds
+    pub fn with_thresholds(
+        queries: Arc<Queries>,
+        embedding: Arc<Embedding>,
+        llm_client: LlmClient,
+        similarity_threshold: f32,
+        ambiguity_threshold: f32,
+    ) -> Self {
+        info!("🎼 Creating flow composer with custom thresholds");
+        Self {
+            queries,
+            embedding,
+            method_approver: MethodApprover::new(llm_client),
+            similarity_threshold,
+            ambiguity_threshold,
         }
     }
 
@@ -70,83 +109,129 @@ impl FlowComposer {
         })
     }
 
-    /// Find method for a flow step using semantic search
-    async fn find_method_for_step(&self, step: &FlowStep, hnsw_index: &mut HnswMemoryIndex<'_>) -> Result<Method, anyhow::Error> {
+    /// Find method for a flow step using semantic search with LLM approval for ambiguity
+    async fn find_method_for_step(&self, step: &FlowStep, hnsw_index: &mut HnswMemoryIndex<'_>) -> Result<Method, CompositionError> {
         debug!("🔍 Searching for method: {}", step.method_pattern);
         
         // Generate embedding for semantic hook
         let embedding = self.embedding.embed(&step.semantic_hook).await?;
         trace!("🧠 Generated embedding for semantic hook");
 
-        // Search HNSW index for similar methods
-        let search_results = hnsw_index.search(&embedding, 5);
+        // Search HNSW index for similar methods (get more candidates)
+        let search_results = hnsw_index.search(&embedding, 10);
         debug!("🔍 Found {} candidate methods", search_results.len());
 
-        // Find exact match by method pattern first
-        for (method_id, similarity) in &search_results {
-            trace!("🔍 Checking method {} with similarity {}", method_id, similarity);
+        // Convert to MethodCandidate objects
+        let mut candidates = Vec::new();
+        for (method_id, similarity) in search_results {
+            if similarity < self.similarity_threshold {
+                continue; // Skip low-quality matches
+            }
             
             if let Ok(method) = self.get_method_by_id(&method_id).await {
-                if method.program.export == step.method_pattern {
-                    debug!("✅ Found exact method match: {}", method.program.export);
-                    return Ok(method);
-                }
+                candidates.push(MethodCandidate {
+                    method,
+                    similarity_score: similarity,
+                    reasoning: format!("Semantic similarity: {:.3}", similarity),
+                });
             }
         }
 
-        // If no exact match, try to find by pattern matching
-        for (method_id, similarity) in &search_results {
-            if let Ok(method) = self.get_method_by_id(&method_id).await {
-                if self.method_matches_pattern(&method, &step.method_pattern) {
-                    debug!("✅ Found pattern match: {} (similarity: {})", method.program.export, similarity);
-                    return Ok(method);
-                }
+        // Check for ambiguity and request LLM approval if needed
+        if self.is_ambiguous(&candidates) {
+            info!("🤖 Ambiguous method match detected, requesting LLM approval");
+            let approved_method = self.request_llm_approval(step, &candidates).await?;
+            return Ok(approved_method);
+        }
+
+        // Try exact match first (existing logic)
+        for candidate in &candidates {
+            if candidate.method.program.export == step.method_pattern {
+                debug!("✅ Found exact method match: {}", candidate.method.program.export);
+                return Ok(candidate.method.clone());
+            }
+        }
+
+        // Try pattern matching (existing logic)
+        for candidate in &candidates {
+            if self.method_matches_pattern(&candidate.method, &step.method_pattern) {
+                debug!("✅ Found pattern match: {} (similarity: {:.3})",
+                    candidate.method.program.export, candidate.similarity_score);
+                return Ok(candidate.method.clone());
             }
         }
 
         error!("❌ No method found for pattern: {}", step.method_pattern);
-        Err(anyhow::anyhow!("No method found for pattern: {}", step.method_pattern))
+        Err(CompositionError::MethodSelectionFailed {
+            step: step.step,
+            pattern: step.method_pattern.clone(),
+            reason: format!("No matching methods found among {} candidates", candidates.len()),
+        })
+    }
+
+    /// Check if method candidates are ambiguous (similar scores)
+    fn is_ambiguous(&self, candidates: &[MethodCandidate]) -> bool {
+        if candidates.len() < 2 {
+            return false;
+        }
+        
+        // Sort by similarity score
+        let mut sorted = candidates.to_vec();
+        sorted.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
+        
+        let top_score = sorted[0].similarity_score;
+        let second_score = sorted[1].similarity_score;
+        
+        // Check if scores are close enough to be ambiguous
+        let score_diff = top_score - second_score;
+        let is_ambiguous = score_diff < self.ambiguity_threshold && top_score > self.similarity_threshold;
+        
+        if is_ambiguous {
+            debug!("🔍 Ambiguity detected: top={:.3}, second={:.3}, diff={:.3}",
+                top_score, second_score, score_diff);
+        }
+        
+        is_ambiguous
+    }
+
+    /// Request LLM approval for ambiguous method selection
+    async fn request_llm_approval(&self, step: &FlowStep, candidates: &[MethodCandidate]) -> Result<Method, CompositionError> {
+        let approval_request = MethodApprovalRequest {
+            original_query: step.semantic_hook.clone(),
+            step_intent: format!("{} {} to {}",
+                step.action,
+                step.from_asset.as_deref().unwrap_or("unknown"),
+                step.to_asset.as_deref().unwrap_or("unknown")
+            ),
+            candidates: candidates.to_vec(),
+            flow_context: None, // TODO: Add multi-step context
+            expected_pattern: Some(step.method_pattern.clone()),
+        };
+
+        let approval = self.method_approver.request_approval_with_fallback(&approval_request).await?;
+        
+        // Find the approved method
+        for candidate in candidates {
+            if candidate.method.program.export == approval.selected_method_export {
+                info!("✅ LLM approved method: {} - {}",
+                    approval.selected_method_export, approval.reasoning);
+                return Ok(candidate.method.clone());
+            }
+        }
+
+        // If approved method not found in candidates, fall back to highest similarity
+        warn!("⚠️  LLM approved method not found in candidates, using highest similarity");
+        Ok(candidates[0].method.clone())
     }
 
     /// Get method by ID from database
     async fn get_method_by_id(&self, method_id: &RecordId) -> Result<Method, anyhow::Error> {
         trace!("🔍 Fetching method from database: {}", method_id);
         
-        // TODO: Implement actual database query
-        // For now, create a mock method for testing
-        let mock_method = Method {
-            id: method_id.clone(),
-            agent: method_id.clone(), // placeholder
-            label: "Mock Method".to_string(),
-            version: "1.0.0".to_string(),
-            visibility: crate::models::Visibility::Public,
-            exec_kind: crate::models::ExecKind::Local,
-            description: "Mock method for testing".to_string(),
-            in_port: crate::models::CreatePort {
-                label: "input".to_string(),
-                description: "Input port".to_string(),
-                channel: crate::models::Channel::Call,
-                type_uri: Some("type://u128".parse().unwrap()),
-                end_point: "agent://mock/input".parse().unwrap(),
-            },
-            out_port: crate::models::CreatePort {
-                label: "output".to_string(),
-                description: "Output port".to_string(),
-                channel: crate::models::Channel::Call,
-                type_uri: Some("type://u128".parse().unwrap()),
-                end_point: "agent://mock/output".parse().unwrap(),
-            },
-            program: crate::models::ProgramRef {
-                module_uri: "local://mock/method".parse().unwrap(),
-                export: "mock_method".to_string(),
-                abi: crate::models::ProgramAbi::LocalFn,
-                checksum: "mock".to_string(),
-            },
-            embedding: vec![0.0; 1024], // placeholder embedding
-        };
+        let method = self.queries.get_method(method_id.clone()).await?;
         
-        debug!("✅ Retrieved method: {}", mock_method.program.export);
-        Ok(mock_method)
+        debug!("✅ Retrieved method: {}", method.program.export);
+        Ok(method)
     }
 
     /// Check if method matches the expected pattern

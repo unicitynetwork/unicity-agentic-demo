@@ -6,10 +6,12 @@
 pub mod parser;
 pub mod composer;
 pub mod executor;
+pub mod approval;
 
 pub use parser::{TransactionFlow, FlowStep, parse_transaction_flow};
 pub use composer::FlowComposer;
 pub use executor::FlowExecutor;
+pub use approval::{MethodApprover, MethodCandidate, MethodApprovalRequest, MethodApprovalResponse, ApprovalError};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,4 +31,14 @@ pub struct StepResult {
     pub output: serde_json::Value,
     pub success: bool,
     pub error: Option<String>,
+}
+
+/// Information about method selection process for transparency
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MethodSelectionInfo {
+    pub selected_method: String,
+    pub candidates_considered: usize,
+    pub llm_approval_required: bool,
+    pub approval_confidence: Option<f32>,
+    pub selection_reasoning: Option<String>,
 }

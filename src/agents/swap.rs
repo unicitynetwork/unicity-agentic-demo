@@ -65,7 +65,7 @@ impl Swap {
                 let out_ep = Uri::parse(format!("agent://SwapAgent/swap#{from}_{to}_out"))?.to_owned();
 
                 // LocalFn export name you can register in your executor registry
-                let export = format!("swap_{}_{}", from, to);
+                let export = format!("swap_{}_to_{}", from, to).to_lowercase();
 
                 // 4) Build and insert the method
                 let method = CreateMethod {

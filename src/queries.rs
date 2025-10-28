@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use surrealdb::engine::local::Db;
 use surrealdb::{RecordId, Surreal};
-use crate::models::{CreateAgent, CreateMethod, Port, Record};
+use crate::models::{CreateAgent, CreateMethod, Method, Port, Record};
 
 #[derive(Debug)]
 pub struct Queries {
@@ -44,5 +44,14 @@ impl Queries {
             .take(0)?;
 
         created.ok_or_else(|| anyhow::anyhow!("Failed to create port"))
+    }
+
+    pub async fn get_method(&self, id: RecordId) -> Result<Method, anyhow::Error> {
+        let method: Option<Method> = self
+            .db
+            .select(id)
+            .await?;
+
+        method.ok_or_else(|| anyhow::anyhow!("Method not found"))
     }
 }

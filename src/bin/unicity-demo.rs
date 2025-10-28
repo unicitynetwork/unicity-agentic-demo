@@ -14,7 +14,7 @@ use unicity_agentic_demo::{
 #[command(about = "Unicity Agentic Demo - Neurosymbolic Flow Based Programming System")]
 struct Args {
     /// OpenAI-compatible API key for LLM
-    #[arg(short, long, env = "UNICITY_API_KEY")]
+    #[arg(short, long, env = "API_KEY")]
     api_key: String,
 
     /// Log level (trace, debug, info, warn, error)
@@ -178,6 +178,7 @@ async fn process_query(
     let composer = FlowComposer::new(
         queries.clone(),
         app.embedding.clone(),
+        app.llm.clone(),
     );
     
     let mut executor = FlowExecutor::new(app.ledger.clone());
@@ -232,8 +233,8 @@ Provide a natural, clear explanation of what happened.
 EXECUTION RESULTS: {}
 ORIGINAL QUERY: "{}"
 
-Explain in plain English what was accomplished, including any intermediate steps and final outcomes.
-Be concise but comprehensive. Use emojis where appropriate."#, execution_json, original_query);
+Explain in natural tone what was accomplished, including any intermediate steps and final outcomes.
+Be concise but comprehensive."#, execution_json, original_query);
 
     let response = llm_client.generate_response(&prompt).await;
     
