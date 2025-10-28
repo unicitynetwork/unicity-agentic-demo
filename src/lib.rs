@@ -5,6 +5,8 @@ mod queries;
 mod executor;
 mod agents;
 mod embedding;
+mod llm;
+mod hnsw;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

@@ -6,7 +6,7 @@ mod method;
 mod port;
 
 pub use agent::{Agent, CreateAgent};
-pub use method::{CreateMethod, Visibility, ExecKind, ProgramRef, ProgramAbi};
+pub use method::{CreateMethod, Visibility, ExecKind, ProgramRef, ProgramAbi, Method};
 pub use port::{CreatePort, Port, Channel};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

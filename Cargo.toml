@@ -15,3 +15,5 @@ chrono = "0.4.42"
 fluent-uri = { version = "0.3.2", features = ["serde"] }
 embed_anything = "0.6.5"
 thiserror = "2.0.17"
+reqwest = "0.12.24"
+hnsw_rs = "0.3.2"

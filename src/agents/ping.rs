@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use fluent_uri::Uri;
 use serde_json::Value;
-use crate::agents::Agent;
 use crate::embedding::Embedding;
+use crate::hnsw::HnswMemoryIndex;
 use crate::models::{Channel, CreateAgent, CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility};
 use crate::ledger::Ledger;
 use crate::queries::Queries;
@@ -10,7 +10,7 @@ use crate::queries::Queries;
 pub struct Ping;
 
 impl Ping {
-    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>) -> Result<(), anyhow::Error> {
+    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>, hnsw: &mut HnswMemoryIndex<'_>) -> Result<(), anyhow::Error> {
         let create_agent = CreateAgent {
             label: "Ping Agent".to_string(),
             version: "1.0.0".to_string(),
@@ -50,16 +50,17 @@ impl Ping {
                 abi: ProgramAbi::LocalFn,
                 checksum: "n/a".to_string(),
             },
-            embedding,
+            embedding: embedding.clone(),
         };
-
-        let _handle = queries.create_method(method).await?;
+        
+        let method_handle = queries.create_method(method).await?;
+        hnsw.add(method_handle.id, &embedding)?;
 
         Ok(())
     }
 }
 
-fn ping(_ledger: &mut Ledger, input: Value) -> Value {
+pub fn ping(_ledger: &mut Ledger, input: Value) -> Value {
     let response = format!("pong: {}", input);
     Value::String(response)
 }

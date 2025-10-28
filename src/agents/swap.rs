@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use fluent_uri::Uri;
 use crate::embedding::Embedding;
+use crate::hnsw::HnswMemoryIndex;
 use crate::ledger::Ledger;
 use crate::models::{Channel, CreateAgent, CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility};
 use crate::queries::Queries;
@@ -27,7 +28,7 @@ pub type ConversionResult = Result<Converted, ConversionError>;
 pub struct Swap;
 
 impl Swap {
-    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>) -> Result<(), anyhow::Error> {
+    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>, mut hnsw: HnswMemoryIndex<'_>) -> Result<(), anyhow::Error> {
         // 1) Create the parent "Swap Agent"
         let create_agent = CreateAgent {
             label: "SwapAgent".to_string(),
@@ -56,7 +57,7 @@ impl Swap {
                 );
 
                 // Per-method embedding (good for discovery by NL intent)
-                let embed_vec = embedding.embed(&description).await?;
+                let embedding = embedding.embed(&description).await?;
 
                 // Endpoints (unique, but simple and predictable)
                 let in_ep  = Uri::parse(format!("agent://SwapAgent/swap#{from}_{to}_in"))?.to_owned();
@@ -93,10 +94,11 @@ impl Swap {
                         abi: ProgramAbi::LocalFn,
                         checksum: "demo".to_string(),     // replace with real blake3/sha256 if you like
                     },
-                    embedding: embed_vec,
+                    embedding: embedding.clone(),
                 };
 
                 let method_handle = queries.create_method(method).await?;
+                hnsw.add(method_handle.id.clone(), &embedding)?;
                 method_handles.push(method_handle);
             }
         }

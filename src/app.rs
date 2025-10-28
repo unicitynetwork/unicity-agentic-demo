@@ -2,27 +2,28 @@ use std::sync::Arc;
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 use crate::embedding::Embedding;
+use crate::hnsw::HnswMemoryIndex;
 use crate::ledger::Ledger;
-use crate::models::Agent;
+use crate::llm::LlmClient;
 use crate::queries::Queries;
 
 pub struct App {
     pub ledger: Ledger,
     pub query: Queries,
     pub embedding: Arc<Embedding>,
+    pub llm: LlmClient,
+    pub agent_index: HnswMemoryIndex<'static>,
 }
 
 impl App {
-    pub fn new(db: Arc<Surreal<Db>>) -> Result<Self, anyhow::Error> {
+    pub fn new(db: Arc<Surreal<Db>>, api_key: String) -> Result<Self, anyhow::Error> {
         Ok(Self {
             ledger: Ledger::new(),
             query: Queries::new(db),
             embedding: Arc::new(Embedding::new()?),
+            llm: LlmClient::new(api_key),
+            agent_index: HnswMemoryIndex::new(100_000, 1024),
         })
-    }
-
-    pub fn register_agent(&self, agent: Agent) {
-        // self.query.
     }
 
     pub fn get_balance(&self, asset_id: &str) -> u128 {
