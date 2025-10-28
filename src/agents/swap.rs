@@ -16,19 +16,20 @@ pub struct Converted {
     pub received_amount: u128,
 }
 
-// Add this variant if not present
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum ConversionError {
-    InvalidRate,
-    InsufficientFunds { have: u128, required: u128 },
-}
-
-pub type ConversionResult = Result<Converted, ConversionError>;
+// TODO: Like logs, errors should be on a different outpoint.
+// // Add this variant if not present
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// pub enum ConversionError {
+//     InvalidRate,
+//     InsufficientFunds { have: u128, required: u128 },
+// }
+//
+// pub type ConversionResult = Result<Converted, ConversionError>;
 
 pub struct Swap;
 
 impl Swap {
-    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>, mut hnsw: HnswMemoryIndex<'_>) -> Result<(), anyhow::Error> {
+    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>, hnsw: &mut HnswMemoryIndex<'_>) -> Result<(), anyhow::Error> {
         // 1) Create the parent "Swap Agent"
         let create_agent = CreateAgent {
             label: "SwapAgent".to_string(),
@@ -40,8 +41,8 @@ impl Swap {
 
         // 2) Define supported assets and type URIs
         let assets = ["ALPHA", "USDT", "BTC", "ETH", "NEAR"];
-        let conv_req_type: Uri<String> = "type://SwapAgent/ConversionRequest@1".parse()?;
-        let asset_amt_type: Uri<String> = "type://SwapAgent/AssetAmount@1".parse()?;
+        let conv_req_type: Uri<String> = "type://u128".parse()?;
+        let asset_amt_type: Uri<String> = "type://u128".parse()?;
 
         let mut method_handles = vec![];
         // 3) Generate one Method for every ordered pair FROM != TO
@@ -126,20 +127,20 @@ macro_rules! define_swaps {
                 #[allow(non_snake_case)]
                 pub fn $fn_name(
                     ledger: &mut $ledger_ty,
-                    request: ConversionRequest,
-                ) -> ConversionResult {
+                    request: u128,
+                ) -> u128 {
                     // Guard: denominator must be > 0
                     if ($den) == 0 {
-                        return Err(ConversionError::InvalidRate);
+                        return 0;
                     }
                     let from_symbol: &str = $from_sym;
                     let to_symbol: &str = $to_sym;
-                    let amount = request.amount;
+                    let amount = request;
 
                     // Balance check
                     let have = ledger.get_balance(from_symbol);
                     if have < amount {
-                        return Err(ConversionError::InsufficientFunds { have, required: amount });
+                        return 0;
                     }
 
                     // Debit source
@@ -154,7 +155,7 @@ macro_rules! define_swaps {
                     // Credit destination
                     ledger.credit(to_symbol, received);
 
-                    Ok(Converted { received_amount: received })
+                    received
                 }
             )*
         )*

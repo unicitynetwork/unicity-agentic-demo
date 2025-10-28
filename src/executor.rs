@@ -1,19 +1,19 @@
 use serde_json::{json, Value};
-use crate::agents::{ConversionRequest, ConversionResult};
+use crate::agents::{ConversionRequest};
 use crate::ledger::Ledger;
 use crate::models::Method;
 use crate::agents::*;
 
 fn swap_json_adapter<F>(f: F, ledger: &mut Ledger, args: Value) -> Value
 where
-    F: Fn(&mut Ledger, ConversionRequest) -> ConversionResult
+    F: Fn(&mut Ledger, u128) -> u128
 {
     match serde_json::from_value::<ConversionRequest>(args) {
-        Ok(req) => match f(ledger, req) {
-            Ok(ok)  => serde_json::to_value(ok).unwrap_or_else(|e| json!({"ok": false, "error": e.to_string()})),
-            Err(er) => json!({"ok": false, "error": er}),
-        },
-        Err(e) => json!({"ok": false, "error": format!("bad args: {e}")}),
+        Ok(req) => {
+            let out = f(ledger, req.amount);      // f returns a bare u128 now
+            json!(out)                     // return it as a JSON number
+        }
+        Err(e) => json!({ "error": format!("bad args: {e}") }),
     }
 }
 

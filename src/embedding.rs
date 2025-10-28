@@ -1,5 +1,5 @@
-use embed_anything::Dtype;
 use embed_anything::embeddings::embed::{EmbeddingResult, TextEmbedder};
+use embed_anything::Dtype;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -24,6 +24,7 @@ pub type EmbeddingServiceResult<T> = Result<T, EmbeddingError>;
 
 pub struct Embedding {
     text_embedder: TextEmbedder,
+    dimensions: usize,
 }
 
 impl Embedding {
@@ -35,10 +36,14 @@ impl Embedding {
             "Qwen/Qwen3-Embedding-0.6B",
             None,
             None,
-            Some(Dtype::BF16),
-        ).map_err(|e| EmbeddingError::ModelLoadError(e.to_string()))?;
+            Some(Dtype::F32),
+        )
+            .map_err(|e| EmbeddingError::ModelLoadError(e.to_string()))?;
 
-        Ok(Self { text_embedder })
+        Ok(Self {
+            text_embedder,
+            dimensions: Self::EXPECTED_DIMENSIONS,
+        })
     }
 
     pub async fn embed(&self, text: &str) -> EmbeddingServiceResult<Vec<f32>> {
@@ -72,13 +77,57 @@ impl Embedding {
         };
 
         // Verify dimensions
-        if embedding.len() != Self::EXPECTED_DIMENSIONS {
+        if embedding.len() != self.dimensions {
             return Err(EmbeddingError::DimensionMismatch {
-                expected: Self::EXPECTED_DIMENSIONS,
+                expected: self.dimensions,
                 actual: embedding.len(),
             });
         }
 
         Ok(embedding)
+    }
+
+    /// Embed with late chunking (for long texts)
+    pub async fn embed_batch(
+        &self,
+        texts: &[&str],
+        batch_size: Option<usize>,
+    ) -> EmbeddingServiceResult<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Err(EmbeddingError::InvalidInput(
+                "Cannot embed empty batch".to_string(),
+            ));
+        }
+
+        let results = self
+            .text_embedder
+            .embed(texts, batch_size, None)
+            .await
+            .map_err(|e| EmbeddingError::EmbeddingGenerationError(e.to_string()))?;
+
+        // Extract all DenseVectors
+        let mut embeddings = Vec::new();
+        for result in results {
+            match result {
+                EmbeddingResult::DenseVector(vec) => {
+                    if vec.len() != self.dimensions {
+                        return Err(EmbeddingError::DimensionMismatch {
+                            expected: self.dimensions,
+                            actual: vec.len(),
+                        });
+                    }
+                    embeddings.push(vec);
+                }
+                EmbeddingResult::MultiVector(_) => {
+                    return Err(EmbeddingError::UnexpectedEmbeddingType);
+                }
+            }
+        }
+
+        Ok(embeddings)
+    }
+
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
     }
 }

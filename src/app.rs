@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
+use tracing::{info, debug, trace, warn};
 use crate::embedding::Embedding;
 use crate::hnsw::HnswMemoryIndex;
 use crate::ledger::Ledger;
@@ -17,24 +18,52 @@ pub struct App {
 
 impl App {
     pub fn new(db: Arc<Surreal<Db>>, api_key: String) -> Result<Self, anyhow::Error> {
+        info!("🏗️  Creating new App instance");
+        debug!("🔧 Initializing components");
+        
+        let ledger = Ledger::new();
+        trace!("💰 Ledger initialized");
+        
+        let query = Queries::new(db);
+        trace!("📊 Query service initialized");
+        
+        let embedding = Arc::new(Embedding::new()?);
+        trace!("🧠 Embedding service initialized");
+        
+        let llm = LlmClient::new(api_key);
+        trace!("🤖 LLM client initialized");
+        
+        let agent_index = HnswMemoryIndex::new(100_000, 1024);
+        trace!("🗺️  HNSW index initialized");
+        
+        info!("✅ App instance created successfully");
+        
         Ok(Self {
-            ledger: Ledger::new(),
-            query: Queries::new(db),
-            embedding: Arc::new(Embedding::new()?),
-            llm: LlmClient::new(api_key),
-            agent_index: HnswMemoryIndex::new(100_000, 1024),
+            ledger,
+            query,
+            embedding,
+            llm,
+            agent_index,
         })
     }
 
     pub fn get_balance(&self, asset_id: &str) -> u128 {
-        self.ledger.get_balance(&asset_id.to_string())
+        trace!("💰 Getting balance for asset: {}", asset_id);
+        let balance = self.ledger.get_balance(&asset_id.to_string());
+        debug!("💰 Balance for {}: {}", asset_id, balance);
+        balance
     }
 
     pub fn set_balance(&mut self, asset_id: &str, amount: u128) {
+        info!("💰 Setting balance for {}: {} (2 decimal places)", asset_id, amount);
+        debug!("💰 Previous balance: {}", self.get_balance(asset_id));
         self.ledger.set_balance(asset_id.to_string(), amount);
+        debug!("💰 New balance: {}", self.get_balance(asset_id));
+        trace!("✅ Balance updated successfully");
     }
 
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
+        warn!("⚠️  App::run() not implemented yet");
         todo!()
     }
 }

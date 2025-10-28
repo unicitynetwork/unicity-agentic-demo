@@ -3,10 +3,20 @@ mod app;
 mod ledger;
 mod queries;
 mod executor;
-mod agents;
+pub mod agents;
 mod embedding;
 mod llm;
 mod hnsw;
+mod flow;
+
+// Re-export public API
+pub use app::App;
+pub use queries::Queries;
+pub use embedding::Embedding;
+pub use llm::LlmClient;
+pub use hnsw::HnswMemoryIndex;
+pub use ledger::Ledger;
+pub use flow::{TransactionFlow, FlowStep, ExecutionResult, FlowComposer, FlowExecutor, parse_transaction_flow};
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
