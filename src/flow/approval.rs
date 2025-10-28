@@ -48,9 +48,6 @@ pub enum ApprovalError {
     
     #[error("No fallback methods available")]
     NoFallbackAvailable,
-    
-    #[error("Selected method not found in candidates: {0}")]
-    MethodNotFound(String),
 }
 
 /// Handles LLM-based method approval for ambiguous semantic matches

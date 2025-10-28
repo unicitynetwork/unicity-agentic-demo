@@ -158,9 +158,15 @@ impl FlowExecutor {
             return Some(s.to_string());
         }
 
-        // If output is a number, return it
+        // If output is a number, return it (this is the key fix for swap outputs)
         if let Some(n) = output.as_u64() {
-            debug!("🔢 Found number output: {}", n);
+            debug!("💰 Found number output: {}", n);
+            return Some(n.to_string());
+        }
+
+        // Also check for i64 numbers (JSON numbers can be i64)
+        if let Some(n) = output.as_i64() {
+            debug!("💰 Found i64 number output: {}", n);
             return Some(n.to_string());
         }
 
@@ -189,19 +195,29 @@ mod tests {
     fn test_extract_amount_from_output() {
         let executor = FlowExecutor::new(Ledger::new());
 
-        // Test swap output
+        // Test swap output with received_amount field
         let swap_output = serde_json::json!({"received_amount": 5000});
         let amount = executor.extract_amount_from_output(&swap_output);
         assert_eq!(amount, Some("5000".to_string()));
+
+        // Test swap output with amount field
+        let amount_output = serde_json::json!({"amount": 5000});
+        let amount = executor.extract_amount_from_output(&amount_output);
+        assert_eq!(amount, Some("5000".to_string()));
+
+        // Test bare number output (this is the key fix for swap functions)
+        let number_output = serde_json::json!(5000);
+        let amount = executor.extract_amount_from_output(&number_output);
+        assert_eq!(amount, Some("5000".to_string()));
+
+        // Test i64 number output
+        let i64_output = serde_json::json!(-5000);
+        let amount = executor.extract_amount_from_output(&i64_output);
+        assert_eq!(amount, Some("-5000".to_string()));
 
         // Test ping output
         let ping_output = serde_json::json!("pong: test");
         let amount = executor.extract_amount_from_output(&ping_output);
         assert_eq!(amount, Some("pong: test".to_string()));
-
-        // Test number output
-        let number_output = serde_json::json!(12345);
-        let amount = executor.extract_amount_from_output(&number_output);
-        assert_eq!(amount, Some("12345".to_string()));
     }
 }
