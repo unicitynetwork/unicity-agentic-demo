@@ -1,8 +1,17 @@
 use fluent_uri::Uri;
 use serde::{Deserialize, Serialize};
-use crate::models::agent::{AgentId, AppId, ExecKind, Port, Visibility};
+use surrealdb::RecordId;
+use crate::models::agent::AgentId;
+use crate::models::CreatePort;
 
+pub type MethodId = RecordId;
 pub type CodeUri = Uri<String>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Visibility {
+    Public,
+    Private,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProgramAbi {
@@ -21,17 +30,38 @@ pub struct ProgramRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Method {
-    pub id: AgentId,
-    pub app_id: AppId,
+pub enum ExecKind {
+    Local,
+    Http,
+    Wasm,
+    Noop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CreateMethod {
+    pub agent: AgentId,
     pub label: String,
     pub version: String,
     pub visibility: Visibility,
     pub exec_kind: ExecKind,
-    pub code_uri: CodeUri,       // required (no Option) for minimal demo
     pub description: String,
-    pub in_port: Port,
-    pub out_port: Port,
-    pub program: ProgramRef,     // binding for executor (LocalFn/HttpJson/WasiJsonStdio)
+    pub in_port: CreatePort,
+    pub out_port: CreatePort,
+    pub program: ProgramRef,
+    pub embedding: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Method {
+    pub id: MethodId,
+    pub agent: AgentId,
+    pub label: String,
+    pub version: String,
+    pub visibility: Visibility,
+    pub exec_kind: ExecKind,
+    pub description: String,
+    pub in_port: CreatePort,
+    pub out_port: CreatePort,
+    pub program: ProgramRef,
     pub embedding: Vec<f32>,
 }
