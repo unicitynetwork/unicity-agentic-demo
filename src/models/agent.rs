@@ -14,6 +14,7 @@ pub struct CreateAgent {
 
 /// An App is a collection of methods working together to achieve a goal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[allow(dead_code)]
 pub struct Agent {
     pub id: AgentId,
     pub label: String,

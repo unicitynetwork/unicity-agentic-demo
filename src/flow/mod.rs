@@ -11,7 +11,7 @@ pub mod approval;
 pub use parser::{TransactionFlow, FlowStep, parse_transaction_flow};
 pub use composer::FlowComposer;
 pub use executor::FlowExecutor;
-pub use approval::{MethodApprover, MethodCandidate, MethodApprovalRequest, MethodApprovalResponse, ApprovalError};
+pub use approval::{MethodApprover, MethodCandidate, MethodApprovalRequest, ApprovalError};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +35,7 @@ pub struct StepResult {
 
 /// Information about method selection process for transparency
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct MethodSelectionInfo {
     pub selected_method: String,
     pub candidates_considered: usize,

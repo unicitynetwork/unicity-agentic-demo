@@ -1,13 +1,12 @@
 use clap::Parser;
 use std::sync::Arc;
-use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
-use tracing::{info, error, warn, debug, trace};
+use tracing::{info, error, debug};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::{
     App, LlmClient, Queries, Embedding, HnswMemoryIndex,
     FlowComposer, FlowExecutor, parse_transaction_flow,
-    format_amount_for_display, format_amount_for_llm, DECIMAL_FACTOR
+    format_amount_for_display, DECIMAL_FACTOR
 };
 
 /// Format amount with proper decimal places for display

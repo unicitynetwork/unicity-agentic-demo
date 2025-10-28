@@ -6,7 +6,7 @@
 use tracing::{info, debug, trace, warn, error};
 use crate::ledger::Ledger;
 use crate::executor::exec_local;
-use crate::decimal::{format_amount_for_display, format_amount_for_llm, DECIMAL_PLACES};
+use crate::decimal::format_amount_for_display;
 use super::{ExecutionResult, StepResult};
 use crate::flow::composer::{ComposedFlow, ComposedStep};
 

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{info, debug, trace, warn, error};
 use crate::llm::LlmClient;
-use crate::decimal::{format_amount_for_llm, parse_amount_from_llm, DECIMAL_PLACES};
+use crate::decimal::DECIMAL_PLACES;
 
 /// Transaction flow parsed from natural language query
 #[derive(Debug, Clone, Serialize, Deserialize)]

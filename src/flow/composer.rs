@@ -11,8 +11,8 @@ use crate::embedding::Embedding;
 use crate::queries::Queries;
 use crate::models::Method;
 use crate::llm::LlmClient;
-use crate::decimal::{format_amount_for_llm, parse_amount_from_llm, DECIMAL_PLACES};
-use super::{TransactionFlow, FlowStep, ExecutionResult, StepResult, MethodCandidate, MethodApprovalRequest, MethodApprover, ApprovalError};
+use crate::decimal::parse_amount_from_llm;
+use super::{TransactionFlow, FlowStep, MethodCandidate, MethodApprovalRequest, MethodApprover, ApprovalError};
 
 /// Errors that can occur during flow composition
 #[derive(Debug, thiserror::Error)]

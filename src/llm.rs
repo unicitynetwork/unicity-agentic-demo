@@ -46,7 +46,9 @@ pub struct LLMChoice {
 
 #[derive(Debug, Deserialize)]
 pub struct LLMUsage {
+    #[allow(dead_code)]
     pub prompt_tokens: u32,
+    #[allow(dead_code)]
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
