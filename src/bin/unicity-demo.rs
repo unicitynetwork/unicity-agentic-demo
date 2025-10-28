@@ -91,16 +91,21 @@ async fn main() -> Result<(), anyhow::Error> {
 
 fn init_tracing(log_level: &str) -> Result<(), anyhow::Error> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
+        .unwrap_or_else(|_| {
+            // Only show logs from our application, filtering out dependencies
+            tracing_subscriber::EnvFilter::new(format!("unicity_agentic_demo={log_level}"))
+        });
 
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer()
             .with_target(false)
-            .with_thread_ids(true)
-            .with_thread_names(true)
-            .with_file(true)
-            .with_line_number(true))
+            .with_thread_ids(false)
+            .with_thread_names(false)
+            .with_file(false)
+            .with_line_number(false)
+            .with_ansi(true)
+            .compact())
         .init();
 
     Ok(())
