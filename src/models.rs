@@ -5,7 +5,7 @@ mod agent;
 mod method;
 mod port;
 
-pub use agent::CreateAgent;
+pub use agent::{CreateAgent, Agent};
 pub use method::{CreateMethod, Visibility, ExecKind, ProgramRef, ProgramAbi, Method};
 pub use port::{CreatePort, Port, Channel};
 

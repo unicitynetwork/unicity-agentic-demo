@@ -22,8 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.use_ns("unicity").use_db("demo").await?;
     info!("✅ Database initialized");
 
-    // Get API key from environment or use a default for demo
-    let api_key = std::env::var("API_KEY").unwrap_or_else(|_| "demo-key".to_string());
+    // Get API key from environment - require it to be set
+    let api_key = std::env::var("API_KEY").map_err(|_| "API_KEY environment variable must be set")?;
 
     // Initialize the app
     info!("🏗️ Initializing application");

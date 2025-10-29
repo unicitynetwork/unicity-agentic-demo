@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::{info, error, debug};
 use crate::app_state::AppState;
-use unicity_agentic_demo::{FlowComposer, FlowExecutor, parse_transaction_flow, format_amount_for_display, LlmClient};
+use unicity_agentic_demo::{FlowComposer, FlowExecutor, parse_transaction_flow, format_amount_for_display};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryResult {
@@ -34,7 +34,7 @@ pub struct AgentInfo {
     pub id: String,
     pub label: String,
     pub description: String,
-    pub methods: Vec<String>,
+    // pub methods: Vec<String>,
 }
 
 /// Initialize all agents in the system
@@ -87,7 +87,7 @@ pub async fn process_query(
     let composer = FlowComposer::new(
         state.queries.clone(),
         state.embedding.clone(),
-        LlmClient::new("demo-key".to_string()), // Create a new LlmClient instance
+        (*state.llm).clone(),
     );
     
     let ledger = {
@@ -99,24 +99,40 @@ pub async fn process_query(
     
     // Compose flow using semantic search and graph traversal
     debug!("🎼 Composing flow");
-    let composed_flow = {
-        // We need to use a different approach to avoid Send issues
-        // Let's clone the agent_index data we need and release the lock
-        let agent_index_data: Vec<String> = {
-            let agent_index = state.agent_index.lock().unwrap();
-            // For now, we'll use a simplified approach
-            // In a real implementation, you'd need to properly handle the HnswMemoryIndex
-            Vec::new() // Placeholder
-        };
-        
-        // For now, let's create a simple composed flow without the agent index
-        // This is a temporary fix to get compilation working
-        unicity_agentic_demo::flow::composer::ComposedFlow {
-            steps: vec![],
-            intent: transaction_flow.intent.clone(),
-            expected_outcome: transaction_flow.expected_outcome.clone(),
+    
+    // We need to handle the HNSW index carefully since it's not Send
+    // The solution is to extract all the data we need from the HNSW index first,
+    // then release the lock before doing async operations
+    
+    // First, get the embedding for each step's semantic hook
+    let mut step_embeddings = Vec::new();
+    for step in &transaction_flow.pipeline {
+        let embedding = state.embedding.embed(&step.semantic_hook).await
+            .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+        step_embeddings.push(embedding);
+    }
+    
+    // Now search the HNSW index for each step (this is synchronous)
+    let mut search_results = Vec::new();
+    {
+        let mut agent_index = state.agent_index.lock().unwrap();
+        for (step, embedding) in transaction_flow.pipeline.iter().zip(step_embeddings.iter()) {
+            let results = agent_index.search(embedding, 10);
+            search_results.push(results);
         }
-    };
+    } // Lock is released here
+    
+    // Now create the composer and compose the flow using the pre-computed search results
+    let composer = FlowComposer::new(
+        state.queries.clone(),
+        state.embedding.clone(),
+        (*state.llm).clone(),
+    );
+    
+    let composed_flow = composer.compose_flow_with_search_results(
+        &transaction_flow,
+        &search_results,
+    ).await.unwrap();
     
     info!("✅ Flow composed successfully");
 
@@ -214,38 +230,45 @@ pub async fn get_all_balances(
 pub async fn get_agents(
     state: State<'_, AppState>,
 ) -> Result<Vec<AgentInfo>, String> {
-    // For now, return hardcoded agent info
-    // In a real implementation, you'd query the database
-    Ok(vec![
-        AgentInfo {
-            id: "ping".to_string(),
-            label: "Ping Agent".to_string(),
-            description: "An agent that responds to ping with pong.".to_string(),
-            methods: vec!["ping".to_string()],
-        },
-        AgentInfo {
-            id: "swap".to_string(),
-            label: "Swap Agent".to_string(),
-            description: "Performs token-to-token swaps across supported assets.".to_string(),
-            methods: vec![
-                "swap ALPHA→USDT".to_string(),
-                "swap USDT→ALPHA".to_string(),
-                "swap ALPHA→BTC".to_string(),
-                "swap BTC→ALPHA".to_string(),
-                // ... more swap methods
-            ],
-        },
-    ])
+    // Query the database for registered agents
+    let agents = state.queries.get_all_agents()
+        .await
+        .map_err(|e| format!("Failed to query agents: {}", e))?;
+    
+    let mut agent_infos = Vec::new();
+    for agent in agents {
+        // let methods = state.queries.get_agent_methods(&agent.id)
+        //     .await
+        //     .map_err(|e| format!("Failed to query agent methods: {}", e))?;
+        
+        agent_infos.push(AgentInfo {
+            id: agent.id.to_string(),
+            label: agent.label,
+            description: agent.description,
+            // methods: methods.into_iter().map(|m| m.name).collect(),
+        });
+    }
+    
+    Ok(agent_infos)
 }
 
-/// Get transaction history (placeholder for now)
+/// Get transaction history
 #[tauri::command]
 pub async fn get_transaction_history(
-    _limit: Option<u32>,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    // Placeholder implementation
-    // In a real implementation, you'd query the database for transaction history
-    Ok(vec![])
+    // Query the database for transaction history
+    let transactions = state.queries.get_transaction_history(limit.unwrap_or(50))
+        .await
+        .map_err(|e| format!("Failed to query transaction history: {}", e))?;
+    
+    // Convert transactions to JSON values
+    let json_transactions = transactions.into_iter()
+        .map(|tx| serde_json::to_value(tx).map_err(|e| format!("Failed to serialize transaction: {}", e)))
+        .collect::<Result<Vec<_>, _>>()?;
+    
+    Ok(json_transactions)
 }
 
 /// Generate natural language summary of execution results

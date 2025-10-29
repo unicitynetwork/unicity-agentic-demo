@@ -110,6 +110,112 @@ impl FlowComposer {
         })
     }
 
+    /// Compose an executable flow from a transaction flow using pre-computed search results
+    /// This method is designed to work around the HNSW index not being Send
+    pub async fn compose_flow_with_search_results(
+        &self,
+        transaction_flow: &TransactionFlow,
+        search_results: &[Vec<(surrealdb::RecordId, f32)>],
+    ) -> Result<ComposedFlow, anyhow::Error> {
+        info!("🎼 Composing flow from transaction pipeline with pre-computed search results");
+        debug!("📋 Pipeline has {} steps", transaction_flow.pipeline.len());
+
+        if transaction_flow.pipeline.len() != search_results.len() {
+            return Err(anyhow::anyhow!(
+                "Mismatch between pipeline steps ({}) and search results ({})",
+                transaction_flow.pipeline.len(),
+                search_results.len()
+            ));
+        }
+
+        let mut composed_steps = Vec::new();
+
+        for (index, (step, step_search_results)) in transaction_flow.pipeline.iter().zip(search_results.iter()).enumerate() {
+            debug!("🔍 Composing step {}: {}", index + 1, step.action);
+            
+            // Find method using pre-computed search results
+            let method = self.find_method_for_step_with_results(step, step_search_results).await?;
+            
+            // Validate port compatibility with previous step
+            if index > 0 {
+                self.validate_port_compatibility(&composed_steps[index - 1], &method).await?;
+            }
+
+            let composed_step = ComposedStep {
+                step: step.step,
+                method,
+                input_data: self.prepare_input_data(step, &composed_steps)?,
+                semantic_hook: step.semantic_hook.clone(),
+            };
+
+            composed_steps.push(composed_step);
+            trace!("✅ Step {} composed successfully", index + 1);
+        }
+
+        info!("✅ Flow composed with {} steps", composed_steps.len());
+        Ok(ComposedFlow {
+            steps: composed_steps,
+            intent: transaction_flow.intent.clone(),
+            expected_outcome: transaction_flow.expected_outcome.clone(),
+        })
+    }
+
+    /// Find method for a flow step using pre-computed search results with LLM approval for ambiguity
+    async fn find_method_for_step_with_results(
+        &self,
+        step: &FlowStep,
+        search_results: &[(surrealdb::RecordId, f32)],
+    ) -> Result<Method, CompositionError> {
+        debug!("🔍 Searching for method: {} using {} pre-computed results", step.method_pattern, search_results.len());
+
+        // Convert to MethodCandidate objects
+        let mut candidates = Vec::new();
+        for (method_id, similarity) in search_results {
+            if *similarity < self.similarity_threshold {
+                continue; // Skip low-quality matches
+            }
+            
+            if let Ok(method) = self.get_method_by_id(method_id).await {
+                candidates.push(MethodCandidate {
+                    method,
+                    similarity_score: *similarity,
+                    reasoning: format!("Semantic similarity: {:.3}", similarity),
+                });
+            }
+        }
+
+        // Check for ambiguity and request LLM approval if needed
+        if self.is_ambiguous(&candidates) {
+            info!("🤖 Ambiguous method match detected, requesting LLM approval");
+            let approved_method = self.request_llm_approval(step, &candidates).await?;
+            return Ok(approved_method);
+        }
+
+        // Try exact match first (existing logic)
+        for candidate in &candidates {
+            if candidate.method.program.export == step.method_pattern {
+                debug!("✅ Found exact method match: {}", candidate.method.program.export);
+                return Ok(candidate.method.clone());
+            }
+        }
+
+        // Try pattern matching (existing logic)
+        for candidate in &candidates {
+            if self.method_matches_pattern(&candidate.method, &step.method_pattern) {
+                debug!("✅ Found pattern match: {} (similarity: {:.3})",
+                    candidate.method.program.export, candidate.similarity_score);
+                return Ok(candidate.method.clone());
+            }
+        }
+
+        error!("❌ No method found for pattern: {}", step.method_pattern);
+        Err(CompositionError::MethodSelectionFailed {
+            step: step.step,
+            pattern: step.method_pattern.clone(),
+            reason: format!("No matching methods found among {} candidates", candidates.len()),
+        })
+    }
+
     /// Find method for a flow step using semantic search with LLM approval for ambiguity
     async fn find_method_for_step(&self, step: &FlowStep, hnsw_index: &mut HnswMemoryIndex<'_>) -> Result<Method, CompositionError> {
         debug!("🔍 Searching for method: {}", step.method_pattern);

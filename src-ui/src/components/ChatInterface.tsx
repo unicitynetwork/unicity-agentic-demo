@@ -53,7 +53,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div style={{ fontWeight: 600, marginBottom: '8px' }}>Execution Steps:</div>
         {steps.map((step, index) => (
           <div key={index} className="step-item">
-            <div className="step-method">Step {step.step + 1}: {step.method_name}</div>
+            <div className="step-method">Step {step.step}: {step.method_name}</div>
             <div className={`step-status ${step.success ? 'success' : 'error'}`}>
               {step.success ? '✓ Success' : `✗ Error: ${step.error || 'Unknown error'}`}
             </div>
