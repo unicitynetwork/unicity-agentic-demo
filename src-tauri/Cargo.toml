@@ -1,0 +1,26 @@
+[package]
+name = "unicity-agentic-demo-ui"
+version = "0.1.0"
+edition = "2021"
+
+#[lib]
+#name = "unicity_agentic_demo_ui"
+#crate-type = ["cdylib"]
+
+[dependencies]
+unicity-agentic-demo = { path = ".." }
+tauri = { version = "2.0", features = ["rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+surrealdb = { version = "2.3.10", features = ["kv-mem"] }
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
