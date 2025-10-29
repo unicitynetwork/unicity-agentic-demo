@@ -5,7 +5,9 @@
   "identifier": "com.unicity.demo",
   "build": {
     "frontendDist": "../src-ui/dist",
-    "devUrl": "http://localhost:1420"
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm --prefix ../src-ui run dev",
+    "beforeBuildCommand": "npm --prefix ../src-ui run build"
   },
   "app": {
     "windows": [
@@ -39,7 +41,8 @@
       "exceptionDomain": "",
       "frameworks": [],
       "providerShortName": null,
-      "signingIdentity": null
+      "signingIdentity": null,
+      "infoPlist": "./Info.plist"
     }
   },
   "plugins": {}

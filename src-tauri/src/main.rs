@@ -3,6 +3,7 @@
 
 mod commands;
 mod app_state;
+mod stt;
 
 use std::sync::Arc;
 use surrealdb::Surreal;
@@ -49,10 +50,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::get_balance,
             commands::get_all_balances,
             commands::get_agents,
-            commands::get_transaction_history
+            commands::get_transaction_history,
+            commands::stt_start,
+            commands::stt_stop
         ])
         .run(tauri::generate_context!())?;
 
+    // Cleanup STT resources on shutdown
+    // #[cfg(target_os = "macos")]
+    // stt::cleanup();
+    
     Ok(())
 }
 

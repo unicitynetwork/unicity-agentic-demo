@@ -13,19 +13,25 @@ interface ChatInterfaceProps {
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
-  messages,
-  isLoading,
-  onSendMessage,
-  error,
-}) => {
+                                                       messages,
+                                                       isLoading,
+                                                       onSendMessage,
+                                                       error,
+                                                     }) => {
   const [inputValue, setInputValue] = useState('');
   const [isSpeechMode, setIsSpeechMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [isListening, setIsListening] = useState(false);
+  const [waitingForPermission, setWaitingForPermission] = useState(false);
   const sttPartialsRef = useRef<string>('');
   const unlistenPartRef = useRef<UnlistenFn | null>(null);
   const unlistenFinalRef = useRef<UnlistenFn | null>(null);
+  const unlistenDebugRef = useRef<UnlistenFn | null>(null);
+  const unlistenMicPermRef = useRef<UnlistenFn | null>(null);
+  const unlistenSpeechAuthRef = useRef<UnlistenFn | null>(null);
+  const startingRef = useRef(false);
+  const shouldRetryRef = useRef(false);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -35,19 +41,131 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [inputValue]);
 
+  // Setup event listeners once on mount
+  useEffect(() => {
+    const setupListeners = async () => {
+      try {
+        // Partial results
+        if (!unlistenPartRef.current) {
+          unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
+            const txt = (e.payload || '').trim();
+            console.log('📝 Partial:', txt);
+            sttPartialsRef.current = txt;
+            setInputValue(txt);
+            if (!isListening) setIsListening(true);
+          });
+        }
+
+        // Final results
+        if (!unlistenFinalRef.current) {
+          unlistenFinalRef.current = await listen<string>('stt://final', (e) => {
+            const txt = (e.payload || '').trim();
+            console.log('✅ Final:', txt);
+
+            // Handle error messages
+            if (txt.startsWith('[error]')) {
+              const errorMsg = txt.replace('[error]', '').trim();
+              console.error('Speech recognition error:', errorMsg);
+
+              let userMessage = errorMsg;
+              if (errorMsg.includes('not authorized')) {
+                userMessage = 'Speech recognition permission needed. Please grant permission in System Settings > Privacy & Security > Speech Recognition, then try again.';
+              } else if (errorMsg.includes('authorization requested')) {
+                userMessage = 'Please grant speech recognition permission when prompted, then click the microphone button again.';
+              }
+
+              alert(userMessage);
+              setIsListening(false);
+              setIsSpeechMode(false);
+              return;
+            }
+
+            sttPartialsRef.current = '';
+            setInputValue(txt);
+          });
+        }
+
+        // Debug messages
+        if (!unlistenDebugRef.current) {
+          unlistenDebugRef.current = await listen<string>('stt://debug', (e) => {
+            const msg = (e.payload || '').toString();
+            console.debug('[stt debug]', msg);
+          });
+        }
+
+        // NEW: Listen for microphone permission changes
+        if (!unlistenMicPermRef.current) {
+          unlistenMicPermRef.current = await listen<string>('stt://mic-permission', (e) => {
+            const status = (e.payload || '').toString();
+            console.log('🎙️ Mic permission:', status);
+
+            if (status === 'granted' && shouldRetryRef.current) {
+              console.log('🔄 Auto-retrying after mic permission granted...');
+              shouldRetryRef.current = false;
+              setWaitingForPermission(false);
+              // Retry after a short delay
+              setTimeout(() => {
+                toggleListening();
+              }, 500);
+            } else if (status === 'denied') {
+              setWaitingForPermission(false);
+              shouldRetryRef.current = false;
+              alert('Microphone access was denied. Please enable it in System Settings > Privacy & Security > Microphone.');
+            }
+          });
+        }
+
+        // NEW: Listen for speech authorization changes
+        if (!unlistenSpeechAuthRef.current) {
+          unlistenSpeechAuthRef.current = await listen<string>('stt://speech-auth', (e) => {
+            const status = (e.payload || '').toString();
+            console.log('🗣️ Speech auth:', status);
+
+            if (status === 'Authorized' && shouldRetryRef.current) {
+              console.log('🔄 Auto-retrying after speech auth granted...');
+              shouldRetryRef.current = false;
+              setWaitingForPermission(false);
+              // Retry after a short delay
+              setTimeout(() => {
+                toggleListening();
+              }, 500);
+            } else if (status === 'Denied') {
+              setWaitingForPermission(false);
+              shouldRetryRef.current = false;
+              alert('Speech recognition was denied. Please enable it in System Settings > Privacy & Security > Speech Recognition.');
+            }
+          });
+        }
+      } catch (e) {
+        console.error('Failed to set up STT event listeners:', e);
+      }
+    };
+
+    setupListeners();
+
+    // Cleanup on unmount
+    return () => {
+      // Always try to stop, even if we think we're not listening
+      invoke('stt_stop').catch(() => {});
+      try { unlistenPartRef.current?.(); } catch {}
+      try { unlistenFinalRef.current?.(); } catch {}
+      try { unlistenDebugRef.current?.(); } catch {}
+      try { unlistenMicPermRef.current?.(); } catch {}
+      try { unlistenSpeechAuthRef.current?.(); } catch {}
+    };
+  }, []); // Only run once on mount
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (inputValue.trim() && !isLoading) {
       onSendMessage(inputValue);
       setInputValue('');
       setIsSpeechMode(false);
-      if (isListening) {
+      if (isListening || waitingForPermission) {
         await invoke('stt_stop').catch(() => {});
-        try { unlistenPartRef.current && unlistenPartRef.current(); } catch {}
-        try { unlistenFinalRef.current && unlistenFinalRef.current(); } catch {}
-        unlistenPartRef.current = null;
-        unlistenFinalRef.current = null;
         setIsListening(false);
+        setWaitingForPermission(false);
+        shouldRetryRef.current = false;
       }
     }
   };
@@ -60,48 +178,77 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const toggleListening = async () => {
-    if (isListening) {
-      try {
-        await invoke('stt_stop');
-      } catch (e) {
-        console.error('stt_stop failed', e);
-      }
-      // cleanup event listeners
-      try { unlistenPartRef.current && unlistenPartRef.current(); } catch {}
-      try { unlistenFinalRef.current && unlistenFinalRef.current(); } catch {}
-      unlistenPartRef.current = null;
-      unlistenFinalRef.current = null;
-      setIsListening(false);
+    // Prevent multiple simultaneous calls
+    if (startingRef.current) {
+      console.log('⏸️ Already starting/stopping, ignoring click');
       return;
     }
 
-    // starting
-    sttPartialsRef.current = '';
-    setInputValue('');
+    startingRef.current = true;
+    console.log('🎤 Toggle listening, current state:', isListening);
 
-    // subscribe to partial and final transcripts
     try {
-      unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
-        const txt = (e.payload || '').trim();
-        sttPartialsRef.current = txt;
-        setInputValue(txt);
-      });
-      unlistenFinalRef.current = await listen<string>('stt://final', (e) => {
-        const txt = (e.payload || '').trim();
+      if (isListening || waitingForPermission) {
+        // Stopping
+        console.log('🛑 Stopping speech recognition...');
+        await invoke('stt_stop');
+        setIsListening(false);
+        setIsSpeechMode(false);
+        setWaitingForPermission(false);
+        shouldRetryRef.current = false;
+        console.log('✅ Stopped successfully');
+      } else {
+        // Starting
+        console.log('▶️ Starting speech recognition...');
         sttPartialsRef.current = '';
-        setInputValue(txt);
-      });
-    } catch (e) {
-      console.error('failed to subscribe to STT events', e);
-    }
+        setInputValue('');
+        setIsSpeechMode(true);
 
-    try {
-      await invoke('stt_start');
-      setIsListening(true);
-    } catch (e) {
-      console.error('stt_start failed', e);
-      setIsListening(false);
-      alert('Unable to start speech recognition: ' + (e as Error).message);
+        try {
+          await invoke('stt_start');
+          // Success!
+          setIsListening(true);
+          setWaitingForPermission(false);
+          shouldRetryRef.current = false;
+          console.log('✅ Started successfully');
+        } catch (e) {
+          const errorMessage = (e as Error).toString();
+          console.error('❌ stt_start failed:', errorMessage);
+
+          // Check if this is a permission request (not a real error)
+          if (errorMessage.includes('permission requested') ||
+            errorMessage.includes('authorization requested') ||
+            errorMessage.includes('Please try again after granting permission')) {
+            // This is expected - permission dialog is showing
+            console.log('ℹ️ Permission requested, waiting for grant...');
+            setWaitingForPermission(true); // Keep button pressed!
+            shouldRetryRef.current = true; // Enable auto-retry
+            // Don't reset isListening or isSpeechMode - keep them as they are
+            // Don't show alert - just wait for permission
+          } else {
+            // Real error
+            let userMessage = 'Unable to start speech recognition: ' + errorMessage;
+
+            if (errorMessage.includes('not authorized')) {
+              userMessage = 'Speech recognition permission required. Please enable in System Settings > Privacy & Security > Speech Recognition.';
+            } else if (errorMessage.includes('denied')) {
+              userMessage = 'Microphone or speech recognition access was denied. Please enable in System Settings > Privacy & Security.';
+            } else if (errorMessage.includes('unavailable')) {
+              userMessage = 'Speech recognition is not available on this device.';
+            }
+
+            alert(userMessage);
+            setWaitingForPermission(false);
+            setIsListening(false);
+            setIsSpeechMode(false);
+            shouldRetryRef.current = false;
+          }
+        }
+      }
+    } finally {
+      // CRITICAL: Always reset startingRef
+      startingRef.current = false;
+      console.log('🔓 Button unlocked');
     }
   };
 
@@ -128,15 +275,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const renderMicrophoneButton = () => {
+    const isPressed = isListening || waitingForPermission;
+    const buttonTitle = isPressed
+      ? (waitingForPermission ? 'Waiting for permission...' : 'Stop recording')
+      : 'Start voice input';
+
     return (
       <button
         type="button"
-        className={`mic-button ${isListening ? 'recording' : ''}`}
+        className={`mic-button ${isPressed ? 'recording' : ''}`}
         onClick={toggleListening}
-        disabled={isLoading}
-        title={isListening ? 'Stop recording' : 'Start voice input'}
+        disabled={isLoading || startingRef.current}
+        aria-pressed={isPressed}
+        title={buttonTitle}
       >
-        {isListening ? (
+        {isPressed ? (
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
           </svg>
@@ -200,13 +353,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       </div>
 
       <div className="input-container">
-        {isListening && (
+        {(isListening || waitingForPermission) && (
           <div className="speech-indicator">
             <span className="recording-dot"></span>
-            Listening... Speak now
+            {waitingForPermission ? 'Waiting for permission...' : 'Listening... Speak now'}
           </div>
         )}
-        
+
         <form onSubmit={handleSubmit} className="input-wrapper">
           <textarea
             ref={textareaRef}
@@ -218,10 +371,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             disabled={isLoading}
             rows={1}
           />
-          
+
           <div className="input-buttons">
             {renderMicrophoneButton()}
-            
+
             <button
               type="submit"
               className="send-button"

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{State, AppHandle, Emitter};
 use tracing::{info, error, debug};
 use crate::app_state::AppState;
+use crate::stt::SpeechRecognizer;
 use unicity_agentic_demo::{FlowComposer, FlowExecutor, parse_transaction_flow, format_amount_for_display};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +52,7 @@ pub async fn initialize_agents(state: &AppState) -> Result<(), Box<dyn std::erro
     ).await?;
     info!("✅ Ping Agent registered");
 
-    // // Register Swap Agent
+    // Register Swap Agent
     // unicity_agentic_demo::agents::swap::Swap::create_agent(
     //     &state.queries,
     //     state.embedding.clone(),
@@ -84,7 +85,7 @@ pub async fn process_query(
     info!("✅ Parsed transaction flow with {} steps", transaction_flow.pipeline.len());
 
     // Create flow composer and executor
-    let composer = FlowComposer::new(
+    let _composer = FlowComposer::new(
         state.queries.clone(),
         state.embedding.clone(),
         (*state.llm).clone(),
@@ -115,21 +116,15 @@ pub async fn process_query(
     // Now search the HNSW index for each step (this is synchronous)
     let mut search_results = Vec::new();
     {
-        let mut agent_index = state.agent_index.lock().unwrap();
-        for (step, embedding) in transaction_flow.pipeline.iter().zip(step_embeddings.iter()) {
+        let agent_index = state.agent_index.lock().unwrap();
+        for (embedding, step) in step_embeddings.iter().zip(transaction_flow.pipeline.iter()) {
             let results = agent_index.search(embedding, 10);
             search_results.push(results);
         }
     } // Lock is released here
     
     // Now create the composer and compose the flow using the pre-computed search results
-    let composer = FlowComposer::new(
-        state.queries.clone(),
-        state.embedding.clone(),
-        (*state.llm).clone(),
-    );
-    
-    let composed_flow = composer.compose_flow_with_search_results(
+    let composed_flow = _composer.compose_flow_with_search_results(
         &transaction_flow,
         &search_results,
     ).await.map_err(|e| format!("Failed to compose flow: {}", e))?;
@@ -157,7 +152,7 @@ pub async fn process_query(
             let summary = generate_execution_summary(
                 &query,
                 &execution_result,
-                &state.llm
+                &(*state.llm).clone()
             ).await?;
             
             let steps = execution_result.steps.into_iter().map(|step| ExecutionStep {
@@ -271,6 +266,32 @@ pub async fn get_transaction_history(
     Ok(json_transactions)
 }
 
+/// Start speech recognition
+#[tauri::command]
+pub async fn stt_start(app_handle: AppHandle) -> Result<(), String> {
+    tracing::info!("🎤 stt_start command called");
+    let sr = SpeechRecognizer::new(app_handle.clone());
+    if sr.is_recognizing() {
+        tracing::info!("🎤 Speech recognition already active");
+        let _ = app_handle.emit("stt://debug", "already active");
+        return Ok(()); // ← do NOT log "Starting…" again
+    }
+    tracing::info!("🎤 Starting speech recognition");
+    sr.start_recognition().await
+}
+
+#[tauri::command]
+pub async fn stt_stop(app_handle: AppHandle) -> Result<(), String> {
+    tracing::info!("🛑 stt_stop command called");
+    let sr = SpeechRecognizer::new(app_handle.clone());
+    if !sr.is_recognizing() {
+        tracing::info!("🛑 Speech recognition not active, nothing to stop");
+        return Ok(());
+    }
+    tracing::info!("🛑 Stopping speech recognition");
+    sr.stop_recognition().await
+}
+
 /// Generate natural language summary of execution results
 async fn generate_execution_summary(
     original_query: &str,
@@ -300,7 +321,7 @@ When mentioning amounts, format them in a user-friendly way:
 Be concise but comprehensive."#, execution_json, original_query);
 
     let response = llm_client.generate_response(&prompt).await;
-    
+
     match response.success {
         true => {
             info!("✅ Execution summary generated");

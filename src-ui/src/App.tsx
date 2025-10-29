@@ -34,14 +34,14 @@ function App() {
           invoke<AgentInfo[]>('get_agents'),
         ]);
 
-        setAppState((prev: any) => ({
+        setAppState((prev: AppState) => ({
           ...prev,
           balances,
           agents,
         }));
       } catch (error) {
         console.error('Failed to initialize app:', error);
-        setAppState((prev: any) => ({
+        setAppState((prev: AppState) => ({
           ...prev,
           error: error instanceof Error ? error.message : 'Failed to initialize app',
         }));
