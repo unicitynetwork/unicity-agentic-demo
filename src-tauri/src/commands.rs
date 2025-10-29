@@ -51,13 +51,13 @@ pub async fn initialize_agents(state: &AppState) -> Result<(), Box<dyn std::erro
     ).await?;
     info!("✅ Ping Agent registered");
 
-    // Register Swap Agent
-    unicity_agentic_demo::agents::swap::Swap::create_agent(
-        &state.queries,
-        state.embedding.clone(),
-        &mut agent_index,
-    ).await?;
-    info!("✅ Swap Agent registered");
+    // // Register Swap Agent
+    // unicity_agentic_demo::agents::swap::Swap::create_agent(
+    //     &state.queries,
+    //     state.embedding.clone(),
+    //     &mut agent_index,
+    // ).await?;
+    // info!("✅ Swap Agent registered");
 
     Ok(())
 }
@@ -132,7 +132,7 @@ pub async fn process_query(
     let composed_flow = composer.compose_flow_with_search_results(
         &transaction_flow,
         &search_results,
-    ).await.unwrap();
+    ).await.map_err(|e| format!("Failed to compose flow: {}", e))?;
     
     info!("✅ Flow composed successfully");
 

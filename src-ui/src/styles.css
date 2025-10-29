@@ -102,6 +102,12 @@ body {
   align-items: flex-end;
 }
 
+.input-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .input-field {
   flex: 1;
   padding: 12px 16px;
@@ -143,6 +149,108 @@ body {
 .send-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Microphone button styles */
+.mic-button {
+  padding: 12px;
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  height: 44px;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mic-button:hover:not(:disabled) {
+  background-color: var(--bg-primary);
+  border-color: var(--accent-color);
+}
+
+.mic-button.recording {
+  background-color: var(--error-color);
+  color: white;
+  border-color: var(--error-color);
+  animation: pulse 1.5s infinite;
+}
+
+.mic-button.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mic-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+  }
+}
+
+/* Speech recognition indicator */
+.speech-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius);
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--error-color);
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.3;
+  }
+}
+
+/* Speech mode input field styling */
+.input-field.speech-mode {
+  border-color: var(--error-color);
+  background-color: rgba(220, 53, 69, 0.05);
+}
+
+.input-field.speech-mode:focus {
+  border-color: var(--error-color);
+  box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
+}
+
+/* Info message styling */
+.info-message {
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 14px;
+  border-left: 4px solid var(--accent-color);
 }
 
 .message {
