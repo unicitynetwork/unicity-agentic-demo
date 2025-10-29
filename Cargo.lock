@@ -8868,6 +8868,7 @@ dependencies = [
  "block",
  "cocoa-foundation",
  "core-foundation 0.10.1",
+ "dispatch",
  "libc",
  "objc",
  "once_cell",

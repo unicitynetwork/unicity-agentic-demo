@@ -12,20 +12,18 @@ if [ -z "$API_KEY" ]; then
     export API_KEY="demo-key"
 fi
 
-# Start frontend in background
-echo "📦 Starting frontend development server..."
-cd src-ui
-npm install
-npm run dev &
-FRONTEND_PID=$!
+# Check if ANTHROPIC_API_KEY is set (if you're using that)
+if [ -z "$ANTHROPIC_API_KEY" ]; then
+    echo "ℹ️  Note: ANTHROPIC_API_KEY not set (using API_KEY instead)"
+fi
 
-# Wait a bit for frontend to start
-sleep 3
+# Navigate to Tauri directory
+cd src-tauri
 
-# Start Tauri application
-echo "🏗️  Starting Tauri application..."
-cd ../src-tauri
-cargo run
+# Use cargo tauri dev instead of cargo run
+# This properly bundles the app with Info.plist for macOS permissions
+# and automatically handles frontend startup via beforeDevCommand
+echo "🏗️  Starting Tauri dev mode (this will auto-start the frontend)..."
+cargo tauri dev
 
-# Clean up frontend process on exit
-kill $FRONTEND_PID 2>/dev/null
+# Note: cargo tauri dev handles cleanup automatically when you Ctrl+C

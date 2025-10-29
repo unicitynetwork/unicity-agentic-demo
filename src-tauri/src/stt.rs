@@ -76,7 +76,7 @@ impl SpeechRecognizer {
     }
 }
 
-// ======================= macOS (Objective‑C bridge) ==========================
+// ======================= macOS (Objective-C bridge) ==========================
 #[cfg(target_os = "macos")]
 mod mac {
     pub use {
@@ -93,6 +93,15 @@ mod mac {
 
 #[cfg(target_os = "macos")]
 use mac::*;
+
+// Ensure auth prompts run on the main thread (Apple APIs expect this)
+#[cfg(target_os = "macos")]
+#[inline]
+unsafe fn on_main<F: FnOnce() + Send + 'static>(f: F) {
+    // Cargo.toml: dispatch = "0.2"
+    use dispatch::Queue;
+    Queue::main().exec_async(f);
+}
 
 #[cfg(target_os = "macos")]
 static mut RECOGNIZER: id = nil;
@@ -149,16 +158,14 @@ unsafe fn start_recognition_macos(app: &AppHandle) -> Result<(), String> {
 
     info!("🎙️ Microphone permission raw value: {} (0x{:X})", mic_permission, mic_permission);
 
-    // Known values (from testing):
-    // granted = 1735552628 (0x6772616E) = 'gran' in ASCII
+    // Known values (per Apple AVAudioSessionRecordPermission):
+    // granted = 1735552628 (0x6772616E) = 'grnt' in ASCII
     // denied  = 1684369017 (0x64656E79) = 'deny' in ASCII
     // undetermined = 1970168948 (0x756E6474) = 'undt' in ASCII
+    const GRANTED: u32 = 1735552628;     // 'grnt'
+    const DENIED: u32 = 1684369017;      // 'deny'
+    const UNDETERMINED: u32 = 1970168948; // 'undt'
 
-    const GRANTED: u32 = 1735552628;     // 0x6772616E = 'gran'
-    const DENIED: u32 = 1684369017;       // 0x64656E79 = 'deny'
-    const UNDETERMINED: u32 = 1970168948; // 0x756E6474 = 'undt'
-
-    // More defensive check - match on known values
     match mic_permission {
         DENIED => {
             error!("❌ Microphone permission DENIED");
@@ -167,37 +174,30 @@ unsafe fn start_recognition_macos(app: &AppHandle) -> Result<(), String> {
         }
         GRANTED => {
             info!("✅ Microphone permission GRANTED - continuing...");
-            // Continue to speech recognition setup
         }
         UNDETERMINED => {
             info!("📋 Microphone permission UNDETERMINED - requesting...");
-            // We need to request permission - this is async and will show a dialog
             let handler_app = app.clone();
-            let handler = {
-                use block::ConcreteBlock;
-                let blk = ConcreteBlock::new(move |granted: bool| {
-                    if granted {
-                        info!("✅ Microphone permission granted by user");
-                        let _ = handler_app.emit("stt://mic-permission", "granted");
-                    } else {
-                        error!("❌ Microphone permission denied by user");
-                        let _ = handler_app.emit("stt://mic-permission", "denied");
-                    }
-                });
-                let copied = blk.copy();
-                let leaked: &'static _ = Box::leak(Box::new(copied));
-                leaked.deref() as *const _ as *mut c_void
-            };
 
-            let _: () = msg_send![session, requestRecordPermission: handler];
+            on_main(move || unsafe {
+                use block::ConcreteBlock;
+
+                let blk = ConcreteBlock::new(move |granted: bool| {
+                    let _ = handler_app.emit("stt://mic-permission", if granted { "granted" } else { "denied" });
+                }).copy();
+
+                let leaked: &'static _ = Box::leak(Box::new(blk));
+
+                let session_cls = Class::get("AVAudioSession").unwrap();
+                let session: id = msg_send![session_cls, sharedInstance];
+                let _: () = msg_send![session, requestRecordPermission: leaked];
+            });
+
             let _: () = msg_send![pool, drain];
             return Err("Microphone permission requested. Please grant permission and try again.".into());
         }
         _ => {
-            // Unknown value - maybe macOS returns different values?
-            // Be defensive: if we got here and it's not explicitly denied, try to continue
             info!("⚠️ Unknown microphone permission value: {} - attempting to continue anyway", mic_permission);
-            // Fall through to continue
         }
     }
 
@@ -212,9 +212,18 @@ unsafe fn start_recognition_macos(app: &AppHandle) -> Result<(), String> {
         0 => { // NotDetermined
             info!("📋 Requesting speech recognition authorization");
             let handler_app = app.clone();
-            let handler = {
+
+            on_main(move || unsafe {
                 use block::ConcreteBlock;
-                let blk = ConcreteBlock::new(move |status: isize| {
+                // Local pool for this main-thread call
+                let pool = NSAutoreleasePool::new(nil);
+
+                // Sanity: confirm we're on main thread
+                let is_main: i32 = msg_send![Class::get("NSThread").unwrap(), isMainThread];
+                debug!("🔧 speech requestAuthorization on main? {}", is_main == 1);
+
+                // NSInteger is 64-bit on arm64 macOS
+                let blk = ConcreteBlock::new(move |status: i64| {
                     let status_text = match status {
                         0 => "NotDetermined",
                         1 => "Denied",
@@ -222,15 +231,18 @@ unsafe fn start_recognition_macos(app: &AppHandle) -> Result<(), String> {
                         3 => "Authorized",
                         _ => "Unknown",
                     };
-                    info!("🔐 Speech authorization changed to: {}", status_text);
                     let _ = handler_app.emit("stt://speech-auth", status_text);
-                });
-                let copied = blk.copy();
-                let leaked: &'static _ = Box::leak(Box::new(copied));
-                leaked.deref() as *const _ as *mut c_void
-            };
+                }).copy();
 
-            let _: () = msg_send![cls_SFSpeechRecognizer, requestAuthorization: handler];
+                // Pass as id (Objective-C block object)
+                let handler_obj: id = std::mem::transmute::<&_, id>(&*blk);
+
+                let cls = Class::get("SFSpeechRecognizer").unwrap();
+                let _: () = msg_send![cls, requestAuthorization: handler_obj];
+
+                let _: () = msg_send![pool, drain];
+            });
+
             let _: () = msg_send![pool, drain];
             return Err("Speech recognition authorization requested. Please grant permission and try again.".into());
         }
@@ -487,7 +499,7 @@ fn create_result_handler(app: AppHandle) -> *mut c_void {
     leaked.deref() as *const _ as *mut c_void
 }
 
-// ======================= non‑macOS stubs =====================================
+// ======================= non-macOS stubs =====================================
 #[cfg(not(target_os = "macos"))]
 #[allow(dead_code)]
 fn _stubs() {}
