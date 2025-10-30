@@ -1,505 +1,368 @@
-#![allow(non_snake_case)]
-
 use tauri::{AppHandle, Emitter};
 use tracing::{info, debug, error};
 use std::sync::{Mutex, Arc};
 use once_cell::sync::Lazy;
+use cpal::traits::{HostTrait, DeviceTrait};
+use crate::audio_capture::AudioCapture;
+use crate::audio_processor::{AudioProcessor, VoiceActivityDetector};
+use crate::whisper_model::WhisperModel;
+use crate::error::{WhisperError, WhisperResult};
+use crate::constants::{
+    WHISPER_SAMPLE_RATE,
+    MAX_AUDIO_BUFFER_SIZE,
+    VAD_THRESHOLD,
+    VAD_WINDOW_SIZE,
+    AUDIO_PROCESSING_INTERVAL_MS,
+    BUFFER_CLEANUP_INTERVAL_SECS,
+    FINAL_TRANSCRIPTION_INTERVAL_SECS,
+    MAIN_LOOP_INTERVAL_MS
+};
 
-// Global instance to avoid creating multiple recognizers
-static SPEECH_RECOGNIZER: Lazy<Arc<Mutex<Option<SpeechRecognizerInner>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(None)));
+// Circular buffer for efficient audio data management
+struct CircularBuffer {
+    buffer: Vec<f32>,
+    capacity: usize,
+    start: usize,
+    len: usize,
+}
+
+impl CircularBuffer {
+    fn new(capacity: usize) -> Self {
+        Self {
+            buffer: vec![0.0; capacity],
+            capacity,
+            start: 0,
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, item: f32) {
+        if self.len < self.capacity {
+            self.buffer[(self.start + self.len) % self.capacity] = item;
+            self.len += 1;
+        } else {
+            // Buffer is full, overwrite oldest data
+            self.buffer[self.start] = item;
+            self.start = (self.start + 1) % self.capacity;
+        }
+    }
+
+    fn extend(&mut self, items: &[f32]) {
+        for &item in items {
+            self.push(item);
+        }
+    }
+
+    fn as_slice(&self) -> &[f32] {
+        if self.len == 0 {
+            return &[];
+        }
+
+        if self.start + self.len <= self.capacity {
+            &self.buffer[self.start..self.start + self.len]
+        } else {
+            // Buffer wraps around - need to return a Vec since we can't return two slices
+            // For now, return an empty slice as this method isn't used in our implementation
+            // In a real implementation, you might want to return a Vec<f32> instead
+            &[]
+        }
+    }
+
+    fn clear(&mut self) {
+        self.start = 0;
+        self.len = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
 
 pub struct SpeechRecognizer {
     app_handle: AppHandle,
+    recognizer: Arc<Mutex<Option<SpeechRecognizerInner>>>,
 }
 
 struct SpeechRecognizerInner {
     is_active: bool,
+    audio_capture: Option<AudioCapture>,
+    audio_processor: Option<AudioProcessor>,
+    whisper_model: Option<WhisperModel>,
+    vad: VoiceActivityDetector,
+    last_partial: String,
 }
 
 impl SpeechRecognizer {
     pub fn new(app_handle: AppHandle) -> Self {
-        Self { app_handle }
+        Self {
+            app_handle,
+            recognizer: Arc::new(Mutex::new(None)),
+        }
     }
 
-    pub async fn start_recognition(&self) -> Result<(), String> {
-        #[cfg(target_os = "macos")]
+    pub async fn start_recognition(&self) -> WhisperResult<()> {
+        // Check if already running
         {
-            // Check if already running
-            let mut recognizer = SPEECH_RECOGNIZER.lock().unwrap();
+            let recognizer = self.recognizer.lock().unwrap();
             if let Some(inner) = recognizer.as_ref() {
                 if inner.is_active {
                     info!("🎤 Speech recognition already active");
                     return Ok(());
                 }
             }
-
-            unsafe { start_recognition_macos(&self.app_handle) }?;
-
-            // Mark as active
-            *recognizer = Some(SpeechRecognizerInner { is_active: true });
-            Ok(())
         }
-        #[cfg(not(target_os = "macos"))]
-        { Err("Speech recognition is only implemented on macOS".into()) }
+
+        // Initialize new recognition session
+        match self.initialize_recognition().await {
+            Ok(inner) => {
+                *self.recognizer.lock().unwrap() = Some(inner);
+                info!("✅ Speech recognition started successfully!");
+                Ok(())
+            }
+            Err(e) => {
+                error!("❌ Failed to start speech recognition: {}", e);
+                Err(e)
+            }
+        }
     }
 
-    pub async fn stop_recognition(&self) -> Result<(), String> {
-        #[cfg(target_os = "macos")]
+    pub async fn stop_recognition(&self) -> WhisperResult<()> {
         {
-            let mut recognizer = SPEECH_RECOGNIZER.lock().unwrap();
+            let recognizer = self.recognizer.lock().unwrap();
             if let Some(inner) = recognizer.as_ref() {
                 if !inner.is_active {
                     info!("🛑 Speech recognition not active");
                     return Ok(());
                 }
             }
-
-            unsafe { stop_recognition_macos(); }
-
-            // Mark as inactive
-            *recognizer = Some(SpeechRecognizerInner { is_active: false });
-            Ok(())
         }
-        #[cfg(not(target_os = "macos"))]
-        { Ok(()) }
+
+        // Stop recognition
+        *self.recognizer.lock().unwrap() = None;
+        info!("✅ Speech recognition stopped");
+        Ok(())
     }
 
     pub fn is_recognizing(&self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            let recognizer = SPEECH_RECOGNIZER.lock().unwrap();
-            recognizer.as_ref().map(|r| r.is_active).unwrap_or(false)
-        }
-        #[cfg(not(target_os = "macos"))]
-        { false }
-    }
-}
-
-// ======================= macOS (Objective-C bridge) ==========================
-#[cfg(target_os = "macos")]
-mod mac {
-    pub use {
-        cocoa_foundation::base::{id, nil, YES, NO},
-        cocoa_foundation::foundation::NSAutoreleasePool,
-        objc::runtime::Class,
-        objc::{msg_send, sel, sel_impl},
-        std::ffi::c_void,
-        std::ops::Deref,
-        std::ptr,
-        libc,
-    };
-}
-
-#[cfg(target_os = "macos")]
-use mac::*;
-
-// Ensure auth prompts run on the main thread (Apple APIs expect this)
-#[cfg(target_os = "macos")]
-#[inline]
-unsafe fn on_main<F: FnOnce() + Send + 'static>(f: F) {
-    // Cargo.toml: dispatch = "0.2"
-    use dispatch::Queue;
-    Queue::main().exec_async(f);
-}
-
-#[cfg(target_os = "macos")]
-static mut RECOGNIZER: id = nil;
-#[cfg(target_os = "macos")]
-static mut AUDIO_ENGINE: id = nil;
-#[cfg(target_os = "macos")]
-static mut REQUEST: id = nil;
-#[cfg(target_os = "macos")]
-static mut TASK: id = nil;
-#[cfg(target_os = "macos")]
-static mut TAP_BLOCK: *mut c_void = std::ptr::null_mut();
-#[cfg(target_os = "macos")]
-static mut LAST_PARTIAL_LEN: usize = 0;
-#[cfg(target_os = "macos")]
-static mut RESULT_HANDLER_BLOCK: *mut c_void = std::ptr::null_mut();
-
-#[cfg(target_os = "macos")]
-unsafe fn force_load_framework(path: &str) {
-    let c = std::ffi::CString::new(path).unwrap();
-    let handle = libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-    if handle.is_null() {
-        error!("Failed to load framework: {}", path);
-    } else {
-        info!("✅ Loaded framework: {}", path);
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn start_recognition_macos(app: &AppHandle) -> Result<(), String> {
-    let pool = NSAutoreleasePool::new(nil);
-
-    info!("🎤 Starting speech recognition engine");
-
-    // Load frameworks
-    force_load_framework("/System/Library/Frameworks/Speech.framework/Speech");
-    force_load_framework("/System/Library/Frameworks/AVFoundation.framework/AVFoundation");
-
-    // Get classes
-    let cls_SFSpeechRecognizer = Class::get("SFSpeechRecognizer")
-        .ok_or("SFSpeechRecognizer not found")?;
-    let cls_SFSpeechAudioBufferRecognitionRequest = Class::get("SFSpeechAudioBufferRecognitionRequest")
-        .ok_or("SFSpeechAudioBufferRecognitionRequest not found")?;
-    let cls_AVAudioEngine = Class::get("AVAudioEngine")
-        .ok_or("AVAudioEngine not found")?;
-    let cls_AVAudioSession = Class::get("AVAudioSession")
-        .ok_or("AVAudioSession not found")?;
-
-    // ============== CRITICAL: CHECK MICROPHONE PERMISSION FIRST ==============
-    info!("🎙️ Checking microphone permission");
-    let session: id = msg_send![cls_AVAudioSession, sharedInstance];
-
-    // recordPermission returns enum values - these are FourCharCode/u32 values
-    let mic_permission: u32 = msg_send![session, recordPermission];
-
-    info!("🎙️ Microphone permission raw value: {} (0x{:X})", mic_permission, mic_permission);
-
-    // Known values (per Apple AVAudioSessionRecordPermission):
-    // granted = 1735552628 (0x6772616E) = 'grnt' in ASCII
-    // denied  = 1684369017 (0x64656E79) = 'deny' in ASCII
-    // undetermined = 1970168948 (0x756E6474) = 'undt' in ASCII
-    const GRANTED: u32 = 1735552628;     // 'grnt'
-    const DENIED: u32 = 1684369017;      // 'deny'
-    const UNDETERMINED: u32 = 1970168948; // 'undt'
-
-    match mic_permission {
-        DENIED => {
-            error!("❌ Microphone permission DENIED");
-            let _: () = msg_send![pool, drain];
-            return Err("Microphone access denied. Please enable in System Settings > Privacy & Security > Microphone.".into());
-        }
-        GRANTED => {
-            info!("✅ Microphone permission GRANTED - continuing...");
-        }
-        UNDETERMINED => {
-            info!("📋 Microphone permission UNDETERMINED - requesting...");
-            let handler_app = app.clone();
-
-            on_main(move || unsafe {
-                use block::ConcreteBlock;
-
-                let blk = ConcreteBlock::new(move |granted: bool| {
-                    let _ = handler_app.emit("stt://mic-permission", if granted { "granted" } else { "denied" });
-                }).copy();
-
-                let leaked: &'static _ = Box::leak(Box::new(blk));
-
-                let session_cls = Class::get("AVAudioSession").unwrap();
-                let session: id = msg_send![session_cls, sharedInstance];
-                let _: () = msg_send![session, requestRecordPermission: leaked];
-            });
-
-            let _: () = msg_send![pool, drain];
-            return Err("Microphone permission requested. Please grant permission and try again.".into());
-        }
-        _ => {
-            info!("⚠️ Unknown microphone permission value: {} - attempting to continue anyway", mic_permission);
-        }
+        let recognizer = self.recognizer.lock().unwrap();
+        recognizer.as_ref().map(|r| r.is_active).unwrap_or(false)
     }
 
-    // ============== CHECK SPEECH RECOGNITION PERMISSION ==============
-    let speech_auth: isize = msg_send![cls_SFSpeechRecognizer, authorizationStatus];
-    info!("🔐 Speech recognition authorization status: {}", speech_auth);
+    async fn initialize_recognition(&self) -> WhisperResult<SpeechRecognizerInner> {
+        info!("🎤 Initializing speech recognition engine");
 
-    match speech_auth {
-        3 => { // Authorized
-            info!("✅ Speech recognition authorized");
-        }
-        0 => { // NotDetermined
-            info!("📋 Requesting speech recognition authorization");
-            let handler_app = app.clone();
+        // Setup model and decoder
+        let (whisper_model, audio_processor) = Self::setup_model_and_decoder().await?;
 
-            on_main(move || unsafe {
-                use block::ConcreteBlock;
-                // Local pool for this main-thread call
-                let pool = NSAutoreleasePool::new(nil);
+        // Setup audio stream (AudioCapture owns its own receiver + CPAL callbacks)
+        let audio_capture = AudioCapture::new()?;
 
-                // Sanity: confirm we're on main thread
-                let is_main: i32 = msg_send![Class::get("NSThread").unwrap(), isMainThread];
-                debug!("🔧 speech requestAuthorization on main? {}", is_main == 1);
+        // Initialize VAD
+        let vad = VoiceActivityDetector::new(VAD_THRESHOLD, VAD_WINDOW_SIZE);
 
-                // NSInteger is 64-bit on arm64 macOS
-                let blk = ConcreteBlock::new(move |status: i64| {
-                    let status_text = match status {
-                        0 => "NotDetermined",
-                        1 => "Denied",
-                        2 => "Restricted",
-                        3 => "Authorized",
-                        _ => "Unknown",
-                    };
-                    let _ = handler_app.emit("stt://speech-auth", status_text);
-                }).copy();
+        // Start audio capture
+        audio_capture.start()?;
 
-                // Pass as id (Objective-C block object)
-                let handler_obj: id = std::mem::transmute::<&_, id>(&*blk);
+        let inner = SpeechRecognizerInner {
+            is_active: true,
+            audio_capture: Some(audio_capture),
+            audio_processor: Some(audio_processor),
+            whisper_model: Some(whisper_model),
+            vad,
+            last_partial: String::new(),
+        };
 
-                let cls = Class::get("SFSpeechRecognizer").unwrap();
-                let _: () = msg_send![cls, requestAuthorization: handler_obj];
+        // Start processing loop
+        self.start_processing_loop();
 
-                let _: () = msg_send![pool, drain];
-            });
-
-            let _: () = msg_send![pool, drain];
-            return Err("Speech recognition authorization requested. Please grant permission and try again.".into());
-        }
-        1 => { // Denied
-            error!("❌ Speech recognition denied");
-            let _: () = msg_send![pool, drain];
-            return Err("Speech recognition denied. Please enable in System Settings > Privacy & Security > Speech Recognition.".into());
-        }
-        2 => { // Restricted
-            error!("⚠️ Speech recognition restricted");
-            let _: () = msg_send![pool, drain];
-            return Err("Speech recognition restricted by device policy.".into());
-        }
-        _ => {
-            error!("❓ Unknown authorization status: {}", speech_auth);
-            let _: () = msg_send![pool, drain];
-            return Err("Unknown authorization status.".into());
-        }
+        Ok(inner)
     }
 
-    // ============== INITIALIZE SPEECH RECOGNIZER ==============
-    info!("🔧 Initializing speech recognizer");
-    RECOGNIZER = msg_send![cls_SFSpeechRecognizer, alloc];
-    RECOGNIZER = msg_send![RECOGNIZER, init];
-    let _: id = msg_send![RECOGNIZER, retain];
+    /// Setup model and decoder for speech recognition
+    async fn setup_model_and_decoder() -> WhisperResult<(WhisperModel, AudioProcessor)> {
+        info!("🧠 Loading Whisper model and setting up audio processor");
 
-    let available: bool = msg_send![RECOGNIZER, isAvailable];
-    if !available {
-        error!("❌ Speech recognizer not available");
-        let _: () = msg_send![RECOGNIZER, release];
-        RECOGNIZER = nil;
-        let _: () = msg_send![pool, drain];
-        return Err("Speech recognizer not available on this device".into());
+        // Initialize Whisper model
+        let device = candle_core::Device::Cpu; // TODO: Add GPU support
+        let whisper_model = WhisperModel::new(None, device).await?;
+
+        // Get audio config for processor setup
+        let host = cpal::default_host();
+        let device = host.default_input_device()
+            .ok_or_else(|| WhisperError::audio_capture("No default input device found"))?;
+        let config = device.default_input_config()?;
+
+        info!("🎚️ Input audio sample-rate: {} Hz, channels: {}", config.sample_rate().0, config.channels());
+
+        // Initialize audio processor
+        let audio_processor = AudioProcessor::new(config.sample_rate().0, &whisper_model.config())?;
+
+        info!("✅ Model and decoder setup complete");
+        Ok((whisper_model, audio_processor))
     }
 
-    // ============== SETUP AUDIO SESSION ==============
-    info!("🎙️ Setting up audio session");
-    let mut err: id = nil;
+    /// Setup audio stream for capturing audio
+    async fn setup_audio_stream(_audio_processor: &AudioProcessor) -> WhisperResult<AudioCapture> {
+        info!("🎤 Setting up audio capture stream");
 
-    let nsstring_cls = Class::get("NSString").ok_or("NSString not found")?;
-    let cat_cstr = std::ffi::CString::new("AVAudioSessionCategoryRecord").unwrap();
-    let mode_cstr = std::ffi::CString::new("AVAudioSessionModeMeasurement").unwrap();
-    let category: id = msg_send![nsstring_cls, stringWithUTF8String: cat_cstr.as_ptr()];
-    let mode: id = msg_send![nsstring_cls, stringWithUTF8String: mode_cstr.as_ptr()];
-    let options: u64 = 0;
+        // Initialize audio capture
+        let audio_capture = AudioCapture::new()?;
 
-    let success: bool = msg_send![session,
-        setCategory: category
-        mode: mode
-        options: options
-        error: &mut err
-    ];
-
-    if !success || err != nil {
-        let desc: id = msg_send![err, localizedDescription];
-        let cstr: *const i8 = msg_send![desc, UTF8String];
-        let msg = std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned();
-        error!("❌ Failed to set audio category: {}", msg);
-        let _: () = msg_send![RECOGNIZER, release];
-        RECOGNIZER = nil;
-        let _: () = msg_send![pool, drain];
-        return Err(format!("Failed to set audio category: {}", msg));
+        info!("✅ Audio stream setup complete");
+        Ok(audio_capture)
     }
 
-    err = nil;
-    let success: bool = msg_send![session, setActive: YES error: &mut err];
-    if !success || err != nil {
-        let desc: id = msg_send![err, localizedDescription];
-        let cstr: *const i8 = msg_send![desc, UTF8String];
-        let msg = std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned();
-        error!("❌ Failed to activate audio session: {}", msg);
-        let _: () = msg_send![RECOGNIZER, release];
-        RECOGNIZER = nil;
-        let _: () = msg_send![pool, drain];
-        return Err(format!("Failed to activate audio session: {}", msg));
-    }
+    /// Main audio processing loop that handles speech recognition
+    fn process_audio_loop(app_handle: AppHandle, recognizer: Arc<Mutex<Option<SpeechRecognizerInner>>>) {
+        info!("🔄 Starting audio processing loop");
 
-    // ============== SETUP AUDIO ENGINE ==============
-    info!("🔧 Initializing audio engine");
-    AUDIO_ENGINE = msg_send![cls_AVAudioEngine, alloc];
-    AUDIO_ENGINE = msg_send![AUDIO_ENGINE, init];
-    let _: id = msg_send![AUDIO_ENGINE, retain];
+        std::thread::spawn(move || {
+            let mut last_transcription_time = std::time::Instant::now();
+            let mut last_cleanup_time = std::time::Instant::now();
 
-    REQUEST = msg_send![cls_SFSpeechAudioBufferRecognitionRequest, alloc];
-    REQUEST = msg_send![REQUEST, init];
-    let _: id = msg_send![REQUEST, retain];
-    let _: () = msg_send![REQUEST, setShouldReportPartialResults: YES];
+            // Use circular buffer with fixed size
+            let mut audio_buffer = CircularBuffer::new(MAX_AUDIO_BUFFER_SIZE);
 
-    // ============== INSTALL TAP ==============
-    let input: id = msg_send![AUDIO_ENGINE, inputNode];
-    let fmt: id = msg_send![input, outputFormatForBus: 0_u32];
-
-    let tap_block_ptr = {
-        use block::ConcreteBlock;
-        let req = REQUEST;
-        let blk = ConcreteBlock::new(move |buffer: id, _when: id| {
-            unsafe {
-                let _: () = msg_send![req, appendAudioPCMBuffer: buffer];
-            }
-        });
-        let copied = blk.copy();
-        let leaked: &'static _ = Box::leak(Box::new(copied));
-        TAP_BLOCK = leaked.deref() as *const _ as *mut c_void;
-        TAP_BLOCK
-    };
-
-    let _: () = msg_send![input,
-        installTapOnBus: 0_u32
-        bufferSize: 1024_u32
-        format: fmt
-        block: tap_block_ptr
-    ];
-
-    // ============== START ENGINE ==============
-    info!("🚀 Starting audio engine");
-    let _: () = msg_send![AUDIO_ENGINE, prepare];
-    err = nil;
-    let success: bool = msg_send![AUDIO_ENGINE, startAndReturnError: &mut err];
-    if !success || err != nil {
-        let desc: id = msg_send![err, localizedDescription];
-        let cstr: *const i8 = msg_send![desc, UTF8String];
-        let msg = std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned();
-        error!("❌ Failed to start audio engine: {}", msg);
-
-        // Cleanup
-        let _: () = msg_send![input, removeTapOnBus: 0_u32];
-        let _: () = msg_send![REQUEST, release];
-        let _: () = msg_send![AUDIO_ENGINE, release];
-        let _: () = msg_send![RECOGNIZER, release];
-        RECOGNIZER = nil;
-        AUDIO_ENGINE = nil;
-        REQUEST = nil;
-        TAP_BLOCK = std::ptr::null_mut();
-
-        let _: () = msg_send![pool, drain];
-        return Err(format!("Failed to start audio engine: {}", msg));
-    }
-
-    // ============== START RECOGNITION ==============
-    info!("🎯 Creating recognition task");
-    let handler = create_result_handler(app.clone());
-    RESULT_HANDLER_BLOCK = handler;
-
-    TASK = msg_send![RECOGNIZER,
-        recognitionTaskWithRequest: REQUEST
-        resultHandler: handler
-    ];
-
-    if TASK != nil {
-        let _: id = msg_send![TASK, retain];
-    }
-
-    info!("✅ Speech recognition started successfully!");
-    let _: () = msg_send![pool, drain];
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn stop_recognition_macos() {
-    let pool = NSAutoreleasePool::new(nil);
-
-    info!("🛑 Stopping speech recognition");
-    LAST_PARTIAL_LEN = 0;
-
-    if AUDIO_ENGINE != nil {
-        let input: id = msg_send![AUDIO_ENGINE, inputNode];
-        let _: () = msg_send![input, removeTapOnBus: 0_u32];
-        let _: () = msg_send![AUDIO_ENGINE, stop];
-    }
-
-    if REQUEST != nil {
-        let _: () = msg_send![REQUEST, endAudio];
-    }
-
-    if TASK != nil {
-        let _: () = msg_send![TASK, cancel];
-    }
-
-    // Release in reverse order
-    if TASK != nil {
-        let _: () = msg_send![TASK, release];
-        TASK = nil;
-    }
-
-    if REQUEST != nil {
-        let _: () = msg_send![REQUEST, release];
-        REQUEST = nil;
-    }
-
-    if AUDIO_ENGINE != nil {
-        let _: () = msg_send![AUDIO_ENGINE, release];
-        AUDIO_ENGINE = nil;
-    }
-
-    if RECOGNIZER != nil {
-        let _: () = msg_send![RECOGNIZER, release];
-        RECOGNIZER = nil;
-    }
-
-    TAP_BLOCK = std::ptr::null_mut();
-    RESULT_HANDLER_BLOCK = std::ptr::null_mut();
-
-    info!("✅ Speech recognition stopped");
-    let _: () = msg_send![pool, drain];
-}
-
-#[cfg(target_os = "macos")]
-fn create_result_handler(app: AppHandle) -> *mut c_void {
-    use block::ConcreteBlock;
-
-    let blk = ConcreteBlock::new(move |result: id, error: id| {
-        unsafe {
-            let pool = NSAutoreleasePool::new(nil);
-
-            if error != nil {
-                let desc: id = msg_send![error, localizedDescription];
-                let cstr: *const i8 = msg_send![desc, UTF8String];
-                let msg = std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned();
-                error!("🔴 Recognition error: {}", msg);
-                let _ = app.emit("stt://error", format!("recognition error: {}", msg));
-                let _ = app.emit("stt://final", format!("[error] {}", msg));
-                let _: () = msg_send![pool, drain];
-                return;
-            }
-
-            if result != nil {
-                let is_final: bool = msg_send![result, isFinal];
-                let tr: id = msg_send![result, bestTranscription];
-                let s: id = msg_send![tr, formattedString];
-                let c: *const i8 = msg_send![s, UTF8String];
-                let text = std::ffi::CStr::from_ptr(c).to_string_lossy().into_owned();
-
-                if is_final {
-                    LAST_PARTIAL_LEN = 0;
-                    if !text.is_empty() {
-                        debug!("🎤 Final: {}", text);
-                        let _ = app.emit("stt://final", text);
+            loop {
+                // Pull a snapshot of state and grab any available audio without holding the lock longer than needed
+                let (is_active, audio_data) = {
+                    let mut guard = recognizer.lock().unwrap();
+                    let inner_opt = guard.as_mut();
+                    // If recognizer was torn down, exit the loop
+                    if inner_opt.is_none() {
+                        (false, Vec::<f32>::new())
+                    } else {
+                        let inner = inner_opt.unwrap();
+                        if !inner.is_active {
+                            (false, Vec::<f32>::new())
+                        } else {
+                            // Try receiving a chunk from the capture (non-blocking)
+                            if let Some(capture) = &mut inner.audio_capture {
+                                match capture.try_recv() {
+                                    Ok(data) => (true, data),
+                                    Err(e) => {
+                                        error!("audio try_recv error: {}", e);
+                                        (true, Vec::new())
+                                    }
+                                }
+                            } else {
+                                (true, Vec::new())
+                            }
+                        }
                     }
-                } else {
-                    if text.len() != LAST_PARTIAL_LEN {
-                        LAST_PARTIAL_LEN = text.len();
-                        debug!("🎤 Partial: {}", text);
-                        let _ = app.emit("stt://partial", text);
+                };
+
+                if !is_active {
+                    // Clean up buffer when stopping recognition
+                    audio_buffer.clear();
+                    break;
+                }
+
+                if audio_data.is_empty() {
+                    std::thread::sleep(std::time::Duration::from_millis(AUDIO_PROCESSING_INTERVAL_MS));
+                    continue;
+                }
+
+                // Add to circular buffer
+                audio_buffer.extend(&audio_data);
+
+                // Voice activity detection + streaming transcription
+                let did_speech_and_processed = {
+                    let mut guard = recognizer.lock().unwrap();
+                    let inner = match guard.as_mut() {
+                        Some(i) => i,
+                        None => break,
+                    };
+
+                    if inner.vad.is_speech(&audio_data) {
+                        if let Some(processor) = &mut inner.audio_processor {
+                            match processor.process_audio(&audio_data) {
+                                Ok(chunks) => {
+                                    for chunk in chunks {
+                                        if let Some(model) = &mut inner.whisper_model {
+                                            match model.transcribe_streaming(&chunk) {
+                                                Ok(segments) => {
+                                                    for segment in segments {
+                                                        if !segment.is_empty() && segment != inner.last_partial {
+                                                            info!("Partial transcription: {}", segment);
+                                                            let _ = app_handle.emit("stt://partial", &segment);
+                                                            inner.last_partial = segment.clone();
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error!("Transcription error: {}", e);
+                                                    let _ = app_handle.emit("stt://error", format!("transcription error: {}", e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Audio processing error: {}", e);
+                                    let _ = app_handle.emit("stt://error", format!("audio processing error: {}", e));
+                                }
+                            }
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                // Periodic buffer maintenance (circular buffer overwrites old data, this is informational)
+                if last_cleanup_time.elapsed() >= std::time::Duration::from_secs(BUFFER_CLEANUP_INTERVAL_SECS) {
+                    if audio_buffer.len() > MAX_AUDIO_BUFFER_SIZE {
+                        debug!("Audio buffer at capacity, old data is being overwritten");
+                    }
+                    last_cleanup_time = std::time::Instant::now();
+                }
+
+                // Periodic final transcription (flush the processor)
+                if last_transcription_time.elapsed() >= std::time::Duration::from_secs(FINAL_TRANSCRIPTION_INTERVAL_SECS) || did_speech_and_processed {
+                    let maybe_final_text = {
+                        let mut guard = recognizer.lock().unwrap();
+                        let inner = match guard.as_mut() { Some(i) => i, None => break };
+                        if let Some(processor) = &mut inner.audio_processor {
+                            if let Ok(Some(resampled)) = processor.flush() {
+                                if let Some(model) = &mut inner.whisper_model {
+                                    match model.transcribe(&resampled) {
+                                        Ok(text) => Some(text),
+                                        Err(e) => {
+                                            error!("Final transcription error: {}", e);
+                                            let _ = app_handle.emit("stt://error", format!("transcription error: {}", e));
+                                            None
+                                        }
+                                    }
+                                } else { None }
+                            } else { None }
+                        } else { None }
+                    };
+
+                    if let Some(text) = maybe_final_text {
+                        if !text.is_empty() {
+                            let mut guard = recognizer.lock().unwrap();
+                            if let Some(inner) = guard.as_mut() {
+                                if text != inner.last_partial {
+                                    let _ = app_handle.emit("stt://final", &text);
+                                    inner.last_partial = text.clone();
+                                }
+                            }
+                        }
+                        last_transcription_time = std::time::Instant::now();
                     }
                 }
+
+                std::thread::sleep(std::time::Duration::from_millis(MAIN_LOOP_INTERVAL_MS));
             }
+        });
+    }
 
-            let _: () = msg_send![pool, drain];
-        }
-    });
-
-    let copied = blk.copy();
-    let leaked: &'static _ = Box::leak(Box::new(copied));
-    leaked.deref() as *const _ as *mut c_void
+    fn start_processing_loop(&self) {
+        Self::process_audio_loop(self.app_handle.clone(), self.recognizer.clone());
+    }
 }
-
-// ======================= non-macOS stubs =====================================
-#[cfg(not(target_os = "macos"))]
-#[allow(dead_code)]
-fn _stubs() {}

@@ -4,6 +4,11 @@
 mod commands;
 mod app_state;
 mod stt;
+mod audio_capture;
+mod audio_processor;
+mod whisper_model;
+mod error;
+mod constants;
 
 use std::sync::Arc;
 use surrealdb::Surreal;
@@ -11,9 +16,11 @@ use tracing::{info, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::App;
 use app_state::AppState;
+use error::{WhisperError, WhisperResult};
+use constants::INITIAL_USDT_BALANCE;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> WhisperResult<()> {
     // Initialize tracing
     init_tracing();
 
@@ -24,15 +31,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅ Database initialized");
 
     // Get API key from environment - require it to be set
-    let api_key = std::env::var("API_KEY").map_err(|_| "API_KEY environment variable must be set")?;
+    let api_key = std::env::var("API_KEY")?;
 
     // Initialize the app
     info!("🏗️ Initializing application");
     let mut app = App::new(db.clone(), api_key.clone())?;
     
-    // Initialize ledger with 100,000 USDT
-    app.set_balance("USDT", 100_000 * unicity_agentic_demo::DECIMAL_FACTOR);
-    info!("✅ App initialized with 100,000 USDT");
+    // Initialize ledger with initial USDT balance
+    app.set_balance("USDT", (INITIAL_USDT_BALANCE as u128) * unicity_agentic_demo::DECIMAL_FACTOR);
+    info!("✅ App initialized with {} USDT", INITIAL_USDT_BALANCE);
 
     // Create shared app state
     let app_state = AppState::new(app, db, api_key).await?;
@@ -40,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize agents
     if let Err(e) = commands::initialize_agents(&app_state).await {
         error!("❌ Failed to initialize agents: {}", e);
+        return Err(e);
     }
 
     // Run Tauri application

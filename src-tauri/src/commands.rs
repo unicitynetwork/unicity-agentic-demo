@@ -3,6 +3,8 @@ use tauri::{State, AppHandle, Emitter};
 use tracing::{info, error, debug};
 use crate::app_state::AppState;
 use crate::stt::SpeechRecognizer;
+use crate::error::{WhisperError, WhisperResult};
+use crate::constants::DEFAULT_TRANSACTION_HISTORY_LIMIT;
 use unicity_agentic_demo::{FlowComposer, FlowExecutor, parse_transaction_flow, format_amount_for_display};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,7 +41,7 @@ pub struct AgentInfo {
 }
 
 /// Initialize all agents in the system
-pub async fn initialize_agents(state: &AppState) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn initialize_agents(state: &AppState) -> WhisperResult<()> {
     info!("🤖 Registering agents in knowledge graph");
     
     let mut agent_index = state.agent_index.lock().unwrap();
@@ -153,7 +155,7 @@ pub async fn process_query(
                 &query,
                 &execution_result,
                 &(*state.llm).clone()
-            ).await?;
+            ).await.map_err(|e| e.to_string())?;
             
             let steps = execution_result.steps.into_iter().map(|step| ExecutionStep {
                 step: step.step,
@@ -254,7 +256,7 @@ pub async fn get_transaction_history(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     // Query the database for transaction history
-    let transactions = state.queries.get_transaction_history(limit.unwrap_or(50))
+    let transactions = state.queries.get_transaction_history(limit.unwrap_or(DEFAULT_TRANSACTION_HISTORY_LIMIT))
         .await
         .map_err(|e| format!("Failed to query transaction history: {}", e))?;
     
@@ -277,7 +279,7 @@ pub async fn stt_start(app_handle: AppHandle) -> Result<(), String> {
         return Ok(()); // ← do NOT log "Starting…" again
     }
     tracing::info!("🎤 Starting speech recognition");
-    sr.start_recognition().await
+    sr.start_recognition().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -289,7 +291,7 @@ pub async fn stt_stop(app_handle: AppHandle) -> Result<(), String> {
         return Ok(());
     }
     tracing::info!("🛑 Stopping speech recognition");
-    sr.stop_recognition().await
+    sr.stop_recognition().await.map_err(|e| e.to_string())
 }
 
 /// Generate natural language summary of execution results
@@ -297,11 +299,10 @@ async fn generate_execution_summary(
     original_query: &str,
     execution_result: &unicity_agentic_demo::ExecutionResult,
     llm_client: &unicity_agentic_demo::LlmClient,
-) -> Result<String, String> {
+) -> WhisperResult<String> {
     info!("🤖 Generating execution summary");
     
-    let execution_json = serde_json::to_string_pretty(execution_result)
-        .map_err(|e| format!("Failed to serialize execution result: {}", e))?;
+    let execution_json = serde_json::to_string_pretty(execution_result)?;
     
     let prompt = format!(r#"
 You are explaining transaction execution results to a user.

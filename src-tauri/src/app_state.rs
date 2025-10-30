@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 use unicity_agentic_demo::{App, Queries, Embedding, HnswMemoryIndex, LlmClient};
+use crate::error::{WhisperError, WhisperResult};
+use crate::constants::INITIAL_USDT_BALANCE;
 
 /// Shared application state for Tauri commands
 pub struct AppState {
@@ -17,11 +19,11 @@ impl AppState {
         app: App,
         db: Arc<Surreal<Db>>,
         api_key: String,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> WhisperResult<Self> {
         let queries = Arc::new(Queries::new(db));
         let embedding = app.embedding.clone();
         let llm = Arc::new(LlmClient::new(api_key));
-        let agent_index = Arc::new(Mutex::new(HnswMemoryIndex::new(100_000, 1024)));
+        let agent_index = Arc::new(Mutex::new(HnswMemoryIndex::new(INITIAL_USDT_BALANCE as usize, 1024)));
 
         Ok(Self {
             app: Arc::new(Mutex::new(app)),
