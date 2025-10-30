@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use cpal::traits::{HostTrait, DeviceTrait};
 use crate::audio_capture::AudioCapture;
 use crate::audio_processor::{AudioProcessor, VoiceActivityDetector};
-use crate::whisper_model::WhisperModel;
+use crate::whisper_model::{Decoder, WhisperModel};
 use crate::error::{WhisperError, WhisperResult};
 use crate::constants::{
     WHISPER_SAMPLE_RATE,
@@ -17,6 +17,7 @@ use crate::constants::{
     FINAL_TRANSCRIPTION_INTERVAL_SECS,
     MAIN_LOOP_INTERVAL_MS
 };
+use crossbeam_channel::{unbounded, Sender};
 
 // Circular buffer for efficient audio data management
 struct CircularBuffer {
@@ -82,6 +83,14 @@ impl CircularBuffer {
     }
 }
 
+fn send_log(tx: &Option<Sender<String>>, msg: impl Into<String>) {
+    if let Some(tx) = tx {
+        let _ = tx.send(msg.into());
+    } else {
+        error!("Log sender not available");
+    }
+}
+
 pub struct SpeechRecognizer {
     app_handle: AppHandle,
     recognizer: Arc<Mutex<Option<SpeechRecognizerInner>>>,
@@ -92,6 +101,7 @@ struct SpeechRecognizerInner {
     audio_capture: Option<AudioCapture>,
     audio_processor: Option<AudioProcessor>,
     whisper_model: Option<WhisperModel>,
+    decoder: Option<Decoder<'static>>,
     vad: VoiceActivityDetector,
     last_partial: String,
 }
@@ -117,7 +127,8 @@ impl SpeechRecognizer {
         }
 
         // Initialize new recognition session
-        match self.initialize_recognition().await {
+        let initalize = self.initialize_recognition().await;
+        match initalize {
             Ok(inner) => {
                 *self.recognizer.lock().unwrap() = Some(inner);
                 info!("✅ Speech recognition started successfully!");
@@ -133,16 +144,14 @@ impl SpeechRecognizer {
     pub async fn stop_recognition(&self) -> WhisperResult<()> {
         {
             let recognizer = self.recognizer.lock().unwrap();
-            if let Some(inner) = recognizer.as_ref() {
-                if !inner.is_active {
-                    info!("🛑 Speech recognition not active");
-                    return Ok(());
-                }
+            if recognizer.is_none() {
+                info!("🛑 Speech recognition not active");
             }
         }
 
         // Stop recognition
         *self.recognizer.lock().unwrap() = None;
+        let _ = self.app_handle.emit("stt://log", "recognizer stopped");
         info!("✅ Speech recognition stopped");
         Ok(())
     }
@@ -172,6 +181,7 @@ impl SpeechRecognizer {
             audio_capture: Some(audio_capture),
             audio_processor: Some(audio_processor),
             whisper_model: Some(whisper_model),
+            decoder: None,
             vad,
             last_partial: String::new(),
         };
@@ -187,7 +197,7 @@ impl SpeechRecognizer {
         info!("🧠 Loading Whisper model and setting up audio processor");
 
         // Initialize Whisper model
-        let device = candle_core::Device::Cpu; // TODO: Add GPU support
+        let device = candle_core::Device::new_metal(0)?; // TODO: Add GPU support
         let whisper_model = WhisperModel::new(None, device).await?;
 
         // Get audio config for processor setup
@@ -218,147 +228,109 @@ impl SpeechRecognizer {
 
     /// Main audio processing loop that handles speech recognition
     fn process_audio_loop(app_handle: AppHandle, recognizer: Arc<Mutex<Option<SpeechRecognizerInner>>>) {
-        info!("🔄 Starting audio processing loop");
+        println!("🔄 Starting audio processing loop");
 
         std::thread::spawn(move || {
-            let mut last_transcription_time = std::time::Instant::now();
-            let mut last_cleanup_time = std::time::Instant::now();
+            println!("🧵 SPAWNED THREAD STARTED!");
 
-            // Use circular buffer with fixed size
-            let mut audio_buffer = CircularBuffer::new(MAX_AUDIO_BUFFER_SIZE);
+            let mut audio_buffer: Vec<f32> = Vec::new();
+            let target_buffer_size = 48000; // 1 second at 48kHz (adjust based on your input rate)
+            let mut silence_count = 0;
 
             loop {
-                // Pull a snapshot of state and grab any available audio without holding the lock longer than needed
-                let (is_active, audio_data) = {
+                let audio_chunk = {
                     let mut guard = recognizer.lock().unwrap();
-                    let inner_opt = guard.as_mut();
-                    // If recognizer was torn down, exit the loop
-                    if inner_opt.is_none() {
-                        (false, Vec::<f32>::new())
-                    } else {
-                        let inner = inner_opt.unwrap();
-                        if !inner.is_active {
-                            (false, Vec::<f32>::new())
-                        } else {
-                            // Try receiving a chunk from the capture (non-blocking)
-                            if let Some(capture) = &mut inner.audio_capture {
-                                match capture.try_recv() {
-                                    Ok(data) => (true, data),
-                                    Err(e) => {
-                                        error!("audio try_recv error: {}", e);
-                                        (true, Vec::new())
-                                    }
+                    let inner = match guard.as_mut() {
+                        Some(i) if i.is_active => i,
+                        _ => {
+                            println!("🛑 Recognizer stopped, exiting loop");
+                            break;
+                        }
+                    };
+
+                    if let Some(capture) = &mut inner.audio_capture {
+                        match capture.recv_timeout(100) {
+                            Ok(data) => {
+                                if data.is_empty() {
+                                    continue;
                                 }
-                            } else {
-                                (true, Vec::new())
+                                data
+                            }
+                            Err(e) => {
+                                println!("❌ Audio capture error: {}", e);
+                                break;
                             }
                         }
+                    } else {
+                        break;
                     }
                 };
 
-                if !is_active {
-                    // Clean up buffer when stopping recognition
-                    audio_buffer.clear();
-                    break;
-                }
+                // Accumulate audio
+                audio_buffer.extend_from_slice(&audio_chunk);
 
-                if audio_data.is_empty() {
-                    std::thread::sleep(std::time::Duration::from_millis(AUDIO_PROCESSING_INTERVAL_MS));
+                if audio_buffer.len() < target_buffer_size {
                     continue;
                 }
 
-                // Add to circular buffer
-                audio_buffer.extend(&audio_data);
+                let samples_to_process: Vec<f32> = audio_buffer.drain(..target_buffer_size).collect();
 
-                // Voice activity detection + streaming transcription
-                let did_speech_and_processed = {
+                // Process and transcribe
+                let transcription = {
                     let mut guard = recognizer.lock().unwrap();
                     let inner = match guard.as_mut() {
                         Some(i) => i,
                         None => break,
                     };
 
-                    if inner.vad.is_speech(&audio_data) {
-                        if let Some(processor) = &mut inner.audio_processor {
-                            match processor.process_audio(&audio_data) {
-                                Ok(chunks) => {
-                                    for chunk in chunks {
-                                        if let Some(model) = &mut inner.whisper_model {
-                                            match model.transcribe_streaming(&chunk) {
-                                                Ok(segments) => {
-                                                    for segment in segments {
-                                                        if !segment.is_empty() && segment != inner.last_partial {
-                                                            info!("Partial transcription: {}", segment);
-                                                            let _ = app_handle.emit("stt://partial", &segment);
-                                                            inner.last_partial = segment.clone();
-                                                        }
-                                                    }
+                    if let Some(processor) = &mut inner.audio_processor {
+                        match processor.process_audio(&samples_to_process) {
+                            Ok(chunks) => {
+                                let mut results = Vec::new();
+                                for chunk in chunks {
+                                    if let Some(model) = &mut inner.whisper_model {
+                                        match model.transcribe_streaming_with_context(&chunk) {
+                                            Ok(Some(text)) => {
+                                                println!("📝 Transcribed: '{}'", text);
+                                                results.push(text);
+                                                silence_count = 0;
+                                            }
+                                            Ok(None) => {
+                                                println!("🤫 No speech");
+                                                silence_count += 1;
+
+                                                // Reset after 3 seconds of silence
+                                                if silence_count >= 3 {
+                                                    println!("🔄 Resetting context after silence");
+                                                    model.reset_context();
+                                                    silence_count = 0;
                                                 }
-                                                Err(e) => {
-                                                    error!("Transcription error: {}", e);
-                                                    let _ = app_handle.emit("stt://error", format!("transcription error: {}", e));
-                                                }
+                                            }
+                                            Err(e) => {
+                                                println!("❌ Error: {}", e);
                                             }
                                         }
                                     }
                                 }
-                                Err(e) => {
-                                    error!("Audio processing error: {}", e);
-                                    let _ = app_handle.emit("stt://error", format!("audio processing error: {}", e));
-                                }
+                                results
+                            }
+                            Err(e) => {
+                                println!("❌ Processing error: {}", e);
+                                Vec::new()
                             }
                         }
-                        true
                     } else {
-                        false
+                        Vec::new()
                     }
                 };
 
-                // Periodic buffer maintenance (circular buffer overwrites old data, this is informational)
-                if last_cleanup_time.elapsed() >= std::time::Duration::from_secs(BUFFER_CLEANUP_INTERVAL_SECS) {
-                    if audio_buffer.len() > MAX_AUDIO_BUFFER_SIZE {
-                        debug!("Audio buffer at capacity, old data is being overwritten");
-                    }
-                    last_cleanup_time = std::time::Instant::now();
+                // Emit results
+                for text in transcription {
+                    let _ = app_handle.emit("stt://partial", &text);
                 }
-
-                // Periodic final transcription (flush the processor)
-                if last_transcription_time.elapsed() >= std::time::Duration::from_secs(FINAL_TRANSCRIPTION_INTERVAL_SECS) || did_speech_and_processed {
-                    let maybe_final_text = {
-                        let mut guard = recognizer.lock().unwrap();
-                        let inner = match guard.as_mut() { Some(i) => i, None => break };
-                        if let Some(processor) = &mut inner.audio_processor {
-                            if let Ok(Some(resampled)) = processor.flush() {
-                                if let Some(model) = &mut inner.whisper_model {
-                                    match model.transcribe(&resampled) {
-                                        Ok(text) => Some(text),
-                                        Err(e) => {
-                                            error!("Final transcription error: {}", e);
-                                            let _ = app_handle.emit("stt://error", format!("transcription error: {}", e));
-                                            None
-                                        }
-                                    }
-                                } else { None }
-                            } else { None }
-                        } else { None }
-                    };
-
-                    if let Some(text) = maybe_final_text {
-                        if !text.is_empty() {
-                            let mut guard = recognizer.lock().unwrap();
-                            if let Some(inner) = guard.as_mut() {
-                                if text != inner.last_partial {
-                                    let _ = app_handle.emit("stt://final", &text);
-                                    inner.last_partial = text.clone();
-                                }
-                            }
-                        }
-                        last_transcription_time = std::time::Instant::now();
-                    }
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(MAIN_LOOP_INTERVAL_MS));
             }
+
+            println!("🏁 Audio processing loop ENDED");
         });
     }
 

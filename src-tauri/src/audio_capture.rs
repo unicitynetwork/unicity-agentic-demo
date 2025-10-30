@@ -47,6 +47,23 @@ impl AudioCapture {
         Ok(())
     }
 
+    pub fn recv(&self) -> WhisperResult<Vec<f32>> {
+        match self.receiver.recv() {
+            Ok(data) => Ok(data),
+            Err(_) => Err(WhisperError::channel("Audio channel disconnected")),
+        }
+    }
+
+    pub fn recv_timeout(&self, timeout_ms: u64) -> WhisperResult<Vec<f32>> {
+        match self.receiver.recv_timeout(std::time::Duration::from_millis(timeout_ms)) {
+            Ok(data) => Ok(data),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(Vec::new()),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err(WhisperError::channel("Audio channel disconnected"))
+            }
+        }
+    }
+
     pub fn try_recv(&self) -> WhisperResult<Vec<f32>> {
         match self.receiver.try_recv() {
             Ok(data) => Ok(data),

@@ -3,7 +3,7 @@
 // Audio processing constants
 pub const WHISPER_SAMPLE_RATE: u32 = 16000; // Whisper's required sample rate (16kHz)
 pub const AUDIO_BUFFER_SIZE_SECONDS: usize = 30; // Audio buffer size in seconds
-pub const AUDIO_CHUNK_SIZE_SECONDS: usize = 30; // Audio chunk size in seconds for processing
+pub const AUDIO_CHUNK_SIZE_SECONDS: usize = 1; // Audio chunk size in seconds for processing
 pub const MAX_AUDIO_BUFFER_SIZE: usize = WHISPER_SAMPLE_RATE as usize * AUDIO_BUFFER_SIZE_SECONDS; // 30 seconds of audio at 16kHz
 pub const AUDIO_CHUNK_SIZE: usize = WHISPER_SAMPLE_RATE as usize * AUDIO_CHUNK_SIZE_SECONDS; // 30 seconds at 16kHz
 
@@ -18,7 +18,7 @@ pub const VAD_WINDOW_SIZE: usize = 10; // Window size for VAD energy calculation
 // Timing constants
 pub const AUDIO_PROCESSING_INTERVAL_MS: u64 = 10; // Interval in milliseconds for audio processing loop
 pub const BUFFER_CLEANUP_INTERVAL_SECS: u64 = 10; // Interval in seconds for buffer cleanup
-pub const FINAL_TRANSCRIPTION_INTERVAL_SECS: u64 = 5; // Interval in seconds for final transcription
+pub const FINAL_TRANSCRIPTION_INTERVAL_SECS: u64 = 10; // Interval in seconds for final transcription
 pub const MAIN_LOOP_INTERVAL_MS: u64 = 100; // Interval in milliseconds for main processing loop
 
 // Mel filter constants

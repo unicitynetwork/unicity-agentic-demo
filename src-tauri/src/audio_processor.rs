@@ -22,16 +22,29 @@ use crate::constants::{
 pub struct AudioProcessor {
     resampler: FastFixedIn<f32>,
     mel_filters: Vec<f32>,
-    sample_rate: u32,
-    buffer: VecDeque<f32>,
-    chunk_size: usize,
+    pub(crate) sample_rate: u32,
+    pub(crate) buffer: VecDeque<f32>,
+    pub(crate) chunk_size: usize,
     config: m::Config,
 }
 
 impl AudioProcessor {
     pub fn new(input_sample_rate: u32, config: &m::Config) -> WhisperResult<Self> {
-        // Create resampler to convert to 16kHz (Whisper's required sample rate)
         let resample_ratio = WHISPER_SAMPLE_RATE as f64 / input_sample_rate as f64;
+
+        // Calculate chunk size at INPUT sample rate to get desired output
+        // If we want 16000 samples at 16kHz output, we need:
+        // chunk_size_input = 16000 / resample_ratio
+        // For 48kHz->16kHz: 16000 / 0.333 = 48000 samples
+        let chunk_size_at_input_rate = (AUDIO_CHUNK_SIZE as f64 / resample_ratio) as usize;
+
+        println!("🔍 AudioProcessor config:");
+        println!("   Input rate: {} Hz", input_sample_rate);
+        println!("   Output rate: {} Hz", WHISPER_SAMPLE_RATE);
+        println!("   Resample ratio: {:.3}", resample_ratio);
+        println!("   Chunk size at input rate: {} samples", chunk_size_at_input_rate);
+        println!("   Expected output: {} samples", AUDIO_CHUNK_SIZE);
+
         let resampler = FastFixedIn::new(
             resample_ratio,
             RESAMPLE_RATIO_MULTIPLIER,
@@ -40,7 +53,6 @@ impl AudioProcessor {
             1,
         )?;
 
-        // Generate mel filters dynamically
         let mel_filters = generate_mel_filters(config.num_mel_bins)?;
 
         Ok(Self {
@@ -48,35 +60,38 @@ impl AudioProcessor {
             mel_filters,
             sample_rate: input_sample_rate,
             buffer: VecDeque::new(),
-            chunk_size: AUDIO_CHUNK_SIZE,
+            chunk_size: chunk_size_at_input_rate,  // ← Store input chunk size!
             config: config.clone(),
         })
     }
 
     pub fn process_audio(&mut self, audio: &[f32]) -> WhisperResult<Vec<Vec<f32>>> {
-        // Add new audio to buffer
         self.buffer.extend(audio);
-        
         let mut chunks = Vec::new();
-        
-        // Process in chunks
+
+        // Process complete chunks
         while self.buffer.len() >= self.chunk_size {
-            let chunk: Vec<f32> = self.buffer.drain(..self.chunk_size).collect();
-            
-            // Resample if needed
-            let resampled_chunk = if self.sample_rate != WHISPER_SAMPLE_RATE {
-                let pcm_vec = vec![chunk];
-                let resampled = self.resampler.process(&pcm_vec, None)?;
-                resampled.into_iter().flatten().collect()
-            } else {
-                chunk
-            };
-            
-            // Convert to mel spectrogram
-            let mel = pcm_to_mel(&self.config, &resampled_chunk, &self.mel_filters);
-            chunks.push(mel);
+            // Take exactly chunk_size samples
+            let samples_to_resample: Vec<f32> = self.buffer.drain(..self.chunk_size).collect();
+
+            // Resample in 1024-sample pieces
+            let full_chunks = samples_to_resample.len() / RESAMPLE_BUFFER_SIZE;
+            let mut resampled_chunk = Vec::new();
+
+            for i in 0..full_chunks {
+                let start = i * RESAMPLE_BUFFER_SIZE;
+                let end = start + RESAMPLE_BUFFER_SIZE;
+                let chunk = &samples_to_resample[start..end];
+                let resampled = self.resampler.process(&[chunk], None)?;
+                resampled_chunk.extend_from_slice(&resampled[0]);
+            }
+
+            println!("🔧 Processed chunk: {} input samples -> {} output samples",
+                     samples_to_resample.len(), resampled_chunk.len());
+
+            chunks.push(resampled_chunk);
         }
-        
+
         Ok(chunks)
     }
 

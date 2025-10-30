@@ -153,6 +153,13 @@ pub struct WhisperModel {
     device: Device,
     config: Config,
     mel_filters: Vec<f32>,
+    language_token: Option<u32>,
+    suppress_tokens: Tensor,
+    sot_token: u32,
+    transcribe_token: u32,
+    eot_token: u32,
+    no_speech_token: u32,
+    no_timestamps_token: u32,
 }
 
 impl WhisperModel {
@@ -206,102 +213,79 @@ impl WhisperModel {
 
         info!("Whisper model loaded successfully");
 
-        Ok(Self {
-            model,
-            tokenizer,
-            device,
-            config,
-            mel_filters,
-        })
-    }
-
-    pub fn transcribe(&mut self, audio: &[f32]) -> WhisperResult<String> {
-        // Convert audio to mel spectrogram
-        let mel = pcm_to_mel(&self.config, audio, &self.mel_filters);
-        let mel_len = mel.len();
-        let mel = Tensor::from_vec(
-            mel,
-            (1, self.config.num_mel_bins, mel_len / self.config.num_mel_bins),
-            &self.device,
-        )?;
-
-        // Create decoder
-        let mut decoder = self.create_decoder(None, None, false, false)?;
-
-        // Run transcription
-        let segments = decoder.run(&mel, None)?;
-
-        // Combine all segments
-        let text = segments
-            .into_iter()
-            .map(|s| s.dr.text)
-            .collect::<Vec<String>>()
-            .join(" ");
-
-        Ok(text.trim().to_string())
-    }
-
-    pub fn transcribe_streaming(&mut self, audio: &[f32]) -> WhisperResult<Vec<String>> {
-        // Convert audio to mel spectrogram
-        let mel = pcm_to_mel(&self.config, audio, &self.mel_filters);
-        let mel_len = mel.len();
-        let mel = Tensor::from_vec(
-            mel,
-            (1, self.config.num_mel_bins, mel_len / self.config.num_mel_bins),
-            &self.device,
-        )?;
-
-        // Create decoder for streaming
-        let mut decoder = self.create_decoder(None, None, false, true)?;
-
-        // Run transcription
-        let segments = decoder.run(&mel, None)?;
-
-        // Return individual segments for streaming
-        Ok(segments
-            .into_iter()
-            .map(|s| s.dr.text.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect())
-    }
-
-    fn create_decoder(
-        &mut self,
-        language_token: Option<u32>,
-        task: Option<Task>,
-        timestamps: bool,
-        verbose: bool,
-    ) -> WhisperResult<Decoder> {
-        let no_timestamps_token = token_id(&self.tokenizer, m::NO_TIMESTAMPS_TOKEN)?;
-
-        // Suppress tokens
-        let suppress_tokens: Vec<f32> = (0..self.config.vocab_size as u32)
+        let no_timestamps_token = token_id(&tokenizer, m::NO_TIMESTAMPS_TOKEN)?;
+        let suppress_tokens: Vec<f32> = (0..config.vocab_size as u32)
             .map(|i| {
-                if self.config.suppress_tokens.contains(&i)
-                    || timestamps && i == no_timestamps_token
-                {
+                if config.suppress_tokens.contains(&i) {
                     f32::NEG_INFINITY
                 } else {
                     0f32
                 }
             })
             .collect();
-        let suppress_tokens = Tensor::new(suppress_tokens.as_slice(), &self.device)?;
+        let suppress_tokens = Tensor::new(suppress_tokens.as_slice(), &device)?;
+        let sot_token = token_id(&tokenizer, m::SOT_TOKEN)?;
+        let transcribe_token = token_id(&tokenizer, m::TRANSCRIBE_TOKEN)?;
+        let eot_token = token_id(&tokenizer, m::EOT_TOKEN)?;
+        let no_speech_token = m::NO_SPEECH_TOKENS
+            .iter()
+            .find_map(|token| token_id(&tokenizer, token).ok())
+            .ok_or_else(|| WhisperError::model("No speech token not found"))?;
 
-        let sot_token = token_id(&self.tokenizer, m::SOT_TOKEN)?;
-        let transcribe_token = token_id(&self.tokenizer, m::TRANSCRIBE_TOKEN)?;
-        let eot_token = token_id(&self.tokenizer, m::EOT_TOKEN)?;
-
-        Ok(Decoder {
-            model: &mut self.model,
-            rng: rand::rngs::StdRng::seed_from_u64(299792458),
-            tokenizer: self.tokenizer.clone(),
+        Ok(Self {
+            model,
+            tokenizer,
+            device,
+            config,
+            mel_filters,
+            language_token: None,
             suppress_tokens,
             sot_token,
             transcribe_token,
             eot_token,
-            language_token,
+            no_speech_token,
+            no_timestamps_token,
         })
+    }
+
+    // Create a decoder that borrows self mutably
+    fn create_decoder(&mut self) -> Decoder {
+        Decoder {
+            model: &mut self.model,
+            rng: rand::rngs::StdRng::seed_from_u64(299792458),
+            tokenizer: self.tokenizer.clone(),
+            suppress_tokens: self.suppress_tokens.clone(),
+            sot_token: self.sot_token,
+            transcribe_token: self.transcribe_token,
+            eot_token: self.eot_token,
+            no_speech_token: self.no_speech_token,
+            no_timestamps_token: self.no_timestamps_token,
+            language_token: self.language_token,
+        }
+    }
+
+    // Streaming transcription that maintains context
+    pub fn transcribe_streaming_with_context(&mut self, audio: &[f32]) -> WhisperResult<Option<String>> {
+        let mel = pcm_to_mel(&self.config, audio, &self.mel_filters);
+        let mel_len = mel.len();
+        let mel = Tensor::from_vec(
+            mel,
+            (1, self.config.num_mel_bins, mel_len / self.config.num_mel_bins),
+            &self.device,
+        )?;
+
+        let mut decoder = self.create_decoder();
+        let result = decoder.decode_chunk(&mel)?;
+
+        // Update language token if it was set
+        self.language_token = decoder.language_token;
+
+        Ok(result)
+    }
+
+    // Reset KV cache (call after silence)
+    pub fn reset_context(&mut self) {
+        self.model.reset_kv_cache();
     }
 
     pub fn config(&self) -> &Config {
@@ -311,13 +295,15 @@ impl WhisperModel {
 
 pub struct Decoder<'a> {
     model: &'a mut Model,
-    rng: rand::rngs::StdRng,
-    tokenizer: Tokenizer,
-    suppress_tokens: Tensor,
-    sot_token: u32,
-    transcribe_token: u32,
-    eot_token: u32,
-    language_token: Option<u32>,
+    pub rng: rand::rngs::StdRng,
+    pub tokenizer: Tokenizer,
+    pub suppress_tokens: Tensor,
+    pub sot_token: u32,
+    pub transcribe_token: u32,
+    pub eot_token: u32,
+    pub no_speech_token: u32,
+    pub no_timestamps_token: u32,
+    pub language_token: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -327,133 +313,65 @@ pub enum Task {
 }
 
 impl<'a> Decoder<'a> {
-    pub fn run(&mut self, mel: &Tensor, _times: Option<(f64, f64)>) -> WhisperResult<Vec<Segment>> {
+    pub fn run(&mut self, mel: &Tensor, _times: Option<(f64, f64)>) -> WhisperResult<Option<String>> {
         // Use fallback decoding with multiple temperatures
-        self.decode_with_fallback(mel)
+        self.decode_chunk(mel)
     }
 
-    /// Decode with temperature fallback sampling
-    /// Tries multiple temperatures from lowest to highest until quality criteria are met
-    fn decode_with_fallback(&mut self, mel: &Tensor) -> WhisperResult<Vec<Segment>> {
-        let temperatures = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
-        let mut best_result: Option<Segment> = None;
-
-        for &temperature in &temperatures {
-            // Reset model state for each attempt
-            self.model.reset_kv_cache();
-
-            match self.decode_with_temperature(mel, temperature) {
-                Ok(segment) => {
-                    let dr = &segment.dr;
-
-                    // Calculate compression ratio
-                    let compression_ratio = self.calculate_compression_ratio(&dr.text);
-
-                    // Quality checks
-                    let avg_logprob_ok = dr.avg_logprob > -1.0; // Reasonable threshold
-                    let compression_ok = compression_ratio < 2.4; // Not too repetitive
-
-                    // For temperature 0.0 (greedy), accept if avg_logprob is reasonable
-                    // For higher temperatures, require both criteria
-                    let quality_ok = if temperature == 0.0 {
-                        avg_logprob_ok
-                    } else {
-                        avg_logprob_ok && compression_ok
-                    };
-
-                    if quality_ok {
-                        // Create updated segment with compression ratio
-                        let mut updated_segment = segment.clone();
-                        updated_segment.dr.compression_ratio = compression_ratio;
-                        return Ok(vec![updated_segment]);
-                    }
-
-                    // Keep track of best result based on avg_logprob
-                    if best_result.is_none() || dr.avg_logprob > best_result.as_ref().unwrap().dr.avg_logprob {
-                        let mut updated_segment = segment.clone();
-                        updated_segment.dr.compression_ratio = compression_ratio;
-                        best_result = Some(updated_segment);
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to decode with temperature {}: {}", temperature, e);
-                    // Continue to next temperature
-                }
-            }
-        }
-
-        // If no result passed quality checks, return the best one we have
-        if let Some(segment) = best_result {
-            info!("Using fallback result with avg_logprob: {}", segment.dr.avg_logprob);
-            return Ok(vec![segment]);
-        }
-
-        // If everything failed, return an error
-        Err(WhisperError::model("All decoding attempts failed"))
-    }
-
-    /// Decode with a specific temperature
-    fn decode_with_temperature(&mut self, mel: &Tensor, temperature: f32) -> WhisperResult<Segment> {
+    pub fn decode_chunk(&mut self, mel: &Tensor) -> WhisperResult<Option<String>> {
         let model = &mut self.model;
-        let audio_features = model.encoder_forward(mel, true)?;
+
+        // Encode audio
+        let audio_features = model.encoder_forward(mel, false)?;
 
         let sample_len = model.config().max_target_positions / 2;
         let mut sum_logprob = 0f64;
+        let mut no_speech_prob = f64::NAN;
         let mut tokens = vec![self.sot_token];
 
-        if let Some(language_token) = self.language_token {
-            tokens.push(language_token);
+        // Set language token on first chunk
+        if self.language_token.is_none() {
+            // Auto-detect or set English
+            self.language_token = Some(token_id(&self.tokenizer, "<|en|>")?);
         }
 
-        // Always use transcribe task (simplified)
+        if let Some(lang_token) = self.language_token {
+            tokens.push(lang_token);
+        }
         tokens.push(self.transcribe_token);
+        tokens.push(self.no_timestamps_token);
 
+        // Decode
         for i in 0..sample_len {
             let tokens_t = Tensor::new(tokens.as_slice(), mel.device())?;
             let tokens_t = tokens_t.unsqueeze(0)?;
             let ys = model.decoder_forward(&tokens_t, &audio_features, i == 0)?;
 
-            let (_, seq_len, _) = ys.dims3()?;
-            let logits = model
-                .decoder_final_linear(&ys.i((..1, seq_len - 1..))?)?
-                .i(0)?
-                .i(0)?;
+            // Check no_speech_prob on first iteration
+            if i == 0 {
+                let logits = model.decoder_final_linear(&ys.i(..1)?)?.i(0)?.i(0)?;
+                no_speech_prob = candle_nn::ops::softmax(&logits, 0)?
+                    .i(self.no_speech_token as usize)?
+                    .to_scalar::<f32>()? as f64;
+            }
 
+            let (_, seq_len, _) = ys.dims3()?;
+            let logits = model.decoder_final_linear(&ys.i((..1, seq_len - 1..))?)?
+                .i(0)?.i(0)?;
             let logits = logits.broadcast_add(&self.suppress_tokens)?;
 
-            // Temperature-based sampling
-            let next_token = if temperature > 0.0 {
-                let logits_v: Vec<f32> = logits.to_vec1()?;
-                let scaled_logits: Vec<f32> = logits_v.iter().map(|&x| x / temperature).collect();
-                let exp_logits: Vec<f32> = scaled_logits.iter().map(|&x| x.exp()).collect();
-                let sum_exp: f32 = exp_logits.iter().sum();
-                let probs: Vec<f32> = exp_logits.iter().map(|&x| x / sum_exp).collect();
-
-                // Simple sampling based on probabilities
-                let mut cumsum = 0.0;
-                let random_val: f32 = self.rng.gen();
-                let mut selected = (probs.len() - 1) as u32;
-                for (i, &prob) in probs.iter().enumerate() {
-                    cumsum += prob;
-                    if random_val <= cumsum {
-                        selected = i as u32;
-                        break;
-                    }
-                }
-                selected
-            } else {
-                // Greedy decoding (temperature = 0)
-                let logits_v: Vec<f32> = logits.to_vec1()?;
-                logits_v
-                    .iter()
-                    .enumerate()
-                    .max_by(|(_, u), (_, v)| u.total_cmp(v))
-                    .map(|(i, _)| i as u32)
-                    .unwrap()
-            };
+            // Greedy decoding
+            let logits_v: Vec<f32> = logits.to_vec1()?;
+            let next_token = logits_v
+                .iter()
+                .enumerate()
+                .max_by(|(_, u), (_, v)| u.total_cmp(v))
+                .map(|(i, _)| i as u32)
+                .unwrap();
 
             tokens.push(next_token);
-            let prob = softmax::<f32>(&logits, candle_core::D::Minus1)?
+
+            let prob = candle_nn::ops::softmax(&logits, candle_core::D::Minus1)?
                 .i(next_token as usize)?
                 .to_scalar::<f32>()? as f64;
 
@@ -463,41 +381,34 @@ impl<'a> Decoder<'a> {
             sum_logprob += prob.ln();
         }
 
-        let text = self
-            .tokenizer
-            .decode(&tokens, true)
-            .map_err(|e| WhisperError::tokenizer(e.to_string()))?;
         let avg_logprob = sum_logprob / tokens.len() as f64;
 
-        Ok(Segment {
-            start: 0.0,
-            duration: 30.0,
-            dr: DecodingResult {
-                tokens,
-                text,
-                avg_logprob,
-                no_speech_prob: f64::NAN, // Simplified - not calculating no_speech_prob
-                temperature: temperature as f64,
-                compression_ratio: f64::NAN, // Will be calculated by caller
-            },
-        })
+        // Filter out hallucinations
+        const NO_SPEECH_THRESHOLD: f64 = 0.6;
+        const LOGPROB_THRESHOLD: f64 = -1.0;
+
+        if no_speech_prob > NO_SPEECH_THRESHOLD && avg_logprob < LOGPROB_THRESHOLD {
+            println!("🤫 No speech detected (prob: {:.3}), skipping", no_speech_prob);
+            return Ok(None);
+        }
+
+        let text = self.tokenizer
+            .decode(&tokens, true)
+            .map_err(|e| WhisperError::tokenizer(e.to_string()))?;
+
+        let text = text.trim();
+
+        // Filter out very short results (likely hallucinations)
+        if text.len() < 3 {
+            println!("⏭️ Skipping short result: '{}'", text);
+            return Ok(None);
+        }
+
+        Ok(Some(text.to_string()))
     }
 
-    /// Calculate a simple repetition ratio (total characters / unique characters).
-    /// Higher values indicate more repetition.
-    fn calculate_compression_ratio(&self, text: &str) -> f64 {
-        if text.is_empty() {
-            return 1.0;
-        }
-        
-        let unique_chars: std::collections::HashSet<char> = text.chars().collect();
-        let total_chars = text.chars().count();
-        
-        if total_chars == 0 {
-            return 1.0;
-        }
-        
-        total_chars as f64 / unique_chars.len() as f64
+    pub fn reset(&mut self) {
+        self.model.reset_kv_cache();
     }
 }
 
