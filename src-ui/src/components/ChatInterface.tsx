@@ -50,8 +50,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
             const txt = (e.payload || '').trim();
             console.log('📝 Partial:', txt);
-            sttPartialsRef.current = txt;
-            setInputValue(txt);
+
+            // Accumulate text
+            const current = sttPartialsRef.current;
+            const newText = current ? `${current} ${txt}` : txt;
+
+            sttPartialsRef.current = newText;
+            setInputValue(newText);
             if (!isListening) setIsListening(true);
           });
         }
@@ -210,6 +215,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           setIsListening(true);
           setWaitingForPermission(false);
           shouldRetryRef.current = false;
+
+          // Re-focus the textarea so user can see text appearing
+          textareaRef.current?.focus();
+
           console.log('✅ Started successfully');
         } catch (e) {
           const errorMessage = (e as Error).toString();

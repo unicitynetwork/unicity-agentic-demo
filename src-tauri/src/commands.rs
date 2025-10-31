@@ -270,28 +270,31 @@ pub async fn get_transaction_history(
 
 /// Start speech recognition
 #[tauri::command]
-pub async fn stt_start(app_handle: AppHandle) -> Result<(), String> {
-    tracing::info!("🎤 stt_start command called");
-    let sr = SpeechRecognizer::new(app_handle.clone());
+pub async fn stt_start(
+    sr: State<'_, SpeechRecognizer>
+) -> Result<(), String> {
+    info!("🎤 stt_start command called");
     if sr.is_recognizing() {
-        tracing::info!("🎤 Speech recognition already active");
-        let _ = app_handle.emit("stt://debug", "already active");
-        return Ok(()); // ← do NOT log "Starting…" again
+        info!("🎤 Speech recognition already active");
+        return Ok(());
     }
-    tracing::info!("🎤 Starting speech recognition");
-    sr.start_recognition().await.map_err(|e| e.to_string())
+    info!("🎤 Starting speech recognition");
+    sr.start_recognition().await;
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn stt_stop(app_handle: AppHandle) -> Result<(), String> {
-    tracing::info!("🛑 stt_stop command called");
-    let sr = SpeechRecognizer::new(app_handle.clone());
+pub async fn stt_stop(
+    sr: State<'_, SpeechRecognizer>
+) -> Result<(), String> {
+    info!("🛑 stt_stop command called");
     if !sr.is_recognizing() {
-        tracing::info!("🛑 Speech recognition not active, nothing to stop");
+        info!("🛑 Speech recognition not active, nothing to stop");
         return Ok(());
     }
-    tracing::info!("🛑 Stopping speech recognition");
-    sr.stop_recognition().await.map_err(|e| e.to_string())
+    info!("🛑 Stopping speech recognition");
+    sr.stop_recognition().await;
+    Ok(())
 }
 
 /// Generate natural language summary of execution results
@@ -302,7 +305,7 @@ async fn generate_execution_summary(
 ) -> WhisperResult<String> {
     info!("🤖 Generating execution summary");
     
-    let execution_json = serde_json::to_string_pretty(execution_result)?;
+    let execution_json = serde_json::to_string_pretty(execution_result).expect("Failed to serialize execution result");
     
     let prompt = format!(r#"
 You are explaining transaction execution results to a user.

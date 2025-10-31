@@ -4,20 +4,19 @@
 mod commands;
 mod app_state;
 mod stt;
-mod audio_capture;
-mod audio_processor;
-mod whisper_model;
 mod error;
 mod constants;
 
 use std::sync::Arc;
 use surrealdb::Surreal;
+use tauri::Manager;
 use tracing::{info, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::App;
 use app_state::AppState;
 use error::{WhisperError, WhisperResult};
 use constants::INITIAL_USDT_BALANCE;
+use crate::stt::SpeechRecognizer;
 
 #[tokio::main]
 async fn main() -> WhisperResult<()> {
@@ -53,6 +52,15 @@ async fn main() -> WhisperResult<()> {
     // Run Tauri application
     tauri::Builder::default()
         .manage(app_state)
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                // Initialize STT resources on macOS
+                let sr = SpeechRecognizer::new(app.handle().clone());
+                app.manage(sr);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::process_query,
             commands::get_balance,
