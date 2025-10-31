@@ -45,50 +45,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     const setupListeners = async () => {
       try {
-        // Partial results
-        if (!unlistenPartRef.current) {
-          unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
-            const txt = (e.payload || '').trim();
-            console.log('📝 Partial:', txt);
+        // FIX: weird duplicate bug.
+        unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
+          const txt = (e.payload || '').trim();
+          console.log('📝 Partial:', txt);
 
-            // Accumulate text
-            const current = sttPartialsRef.current;
-            const newText = current ? `${current} ${txt}` : txt;
+          const current = sttPartialsRef.current;
 
-            sttPartialsRef.current = newText;
-            setInputValue(newText);
-            if (!isListening) setIsListening(true);
-          });
-        }
+          // Only append if this is new text (not already contained in current)
+          let newText = current;
+          if (!current.includes(txt)) {
+            newText = current ? `${current} ${txt}` : txt;
+          }
 
-        // Final results
-        if (!unlistenFinalRef.current) {
-          unlistenFinalRef.current = await listen<string>('stt://final', (e) => {
-            const txt = (e.payload || '').trim();
-            console.log('✅ Final:', txt);
-
-            // Handle error messages
-            if (txt.startsWith('[error]')) {
-              const errorMsg = txt.replace('[error]', '').trim();
-              console.error('Speech recognition error:', errorMsg);
-
-              let userMessage = errorMsg;
-              if (errorMsg.includes('not authorized')) {
-                userMessage = 'Speech recognition permission needed. Please grant permission in System Settings > Privacy & Security > Speech Recognition, then try again.';
-              } else if (errorMsg.includes('authorization requested')) {
-                userMessage = 'Please grant speech recognition permission when prompted, then click the microphone button again.';
-              }
-
-              alert(userMessage);
-              setIsListening(false);
-              setIsSpeechMode(false);
-              return;
-            }
-
-            sttPartialsRef.current = '';
-            setInputValue(txt);
-          });
-        }
+          sttPartialsRef.current = newText;
+          setInputValue(newText);
+          if (!isListening) setIsListening(true);
+        });
 
         // Debug messages
         if (!unlistenDebugRef.current) {

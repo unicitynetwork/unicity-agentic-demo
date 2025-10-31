@@ -9,12 +9,12 @@ pub struct SpeechRecognizer {
     app_handle: AppHandle,
     is_active: Arc<Mutex<bool>>,
     model: Arc<Mutex<Option<Whisper>>>,
+    task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl SpeechRecognizer {
     pub fn new(app_handle: AppHandle) -> Self {
         // Setup custom cache directory BEFORE loading any models
-        // This must happen before any Kalosm/HuggingFace operations
         match setup_whisper_cache() {
             Ok(cache_dir) => {
                 info!("📁 Cache directory: {}", cache_dir.display());
@@ -37,6 +37,7 @@ impl SpeechRecognizer {
             app_handle,
             is_active: Arc::new(Mutex::new(false)),
             model: Arc::new(Mutex::new(None)),
+            task_handle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -65,6 +66,10 @@ impl SpeechRecognizer {
 
         // Stop recognition
         *self.is_active.lock().unwrap() = false;
+        // Abort the old task
+        if let Some(handle) = self.task_handle.lock().unwrap().take() {
+            handle.abort(); // Kill it immediately
+        }
         let _ = self.app_handle.emit("stt://log", "recognizer stopped");
         info!("✅ Speech recognition stopped");
     }
@@ -125,7 +130,7 @@ impl SpeechRecognizer {
         let is_active = self.is_active.clone();
         let model = self.model.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             // Get stream once
             let mic = MicInput::default();
             let stream = mic.stream();
@@ -153,6 +158,7 @@ impl SpeechRecognizer {
                 }
             }
         });
+        *self.task_handle.lock().unwrap() = Some(handle);
     }
 }
 
