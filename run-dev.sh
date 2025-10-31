@@ -18,7 +18,7 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
 fi
 
 # Navigate to Tauri directory
-cd src-tauri
+cd desktop
 
 # Use cargo tauri dev instead of cargo run
 # This properly bundles the app with Info.plist for macOS permissions

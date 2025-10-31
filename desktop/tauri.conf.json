@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.unicity.demo",
   "build": {
-    "frontendDist": "../src-ui/dist",
+    "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm --prefix src-ui run dev",
-    "beforeBuildCommand": "npm --prefix src-ui run build"
+    "beforeDevCommand": "npm --prefix frontend run dev",
+    "beforeBuildCommand": "npm --prefix frontend run build"
   },
   "app": {
     "windows": [

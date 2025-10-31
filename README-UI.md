@@ -6,7 +6,7 @@ This is the macOS native frontend for the Unicity Agentic Demo, built with Tauri
 
 1. Install Node.js dependencies:
    ```bash
-   cd src-ui
+   cd frontend
    npm install
    ```
 
@@ -21,13 +21,13 @@ This is the macOS native frontend for the Unicity Agentic Demo, built with Tauri
 
 1. Start the frontend development server:
    ```bash
-   cd src-ui
+   cd frontend
    npm run dev
    ```
 
 2. In a separate terminal, start the Tauri application:
    ```bash
-   cd src-tauri
+   cd desktop
    cargo run
    ```
 
@@ -35,13 +35,13 @@ This is the macOS native frontend for the Unicity Agentic Demo, built with Tauri
 
 1. Build the frontend:
    ```bash
-   cd src-ui
+   cd frontend
    npm run build
    ```
 
 2. Build the Tauri application:
    ```bash
-   cd src-tauri
+   cd desktop
    cargo tauri build
    ```
 

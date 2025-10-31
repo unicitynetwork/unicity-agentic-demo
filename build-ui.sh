@@ -12,7 +12,7 @@ fi
 
 # Build frontend
 echo "📦 Building frontend..."
-cd src-ui
+cd frontend
 npm install
 npm run build
 
@@ -28,7 +28,7 @@ cd ..
 
 # Build Tauri app
 echo "🏗️  Building Tauri application..."
-cd ../src-tauri
+cd ../desktop
 cargo tauri build
 
 if [ $? -ne 0 ]; then
@@ -37,4 +37,4 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "✅ Tauri application built successfully"
-echo "🎉 Build complete! Check src-tauri/target/release/bundle/ for the macOS app"
+echo "🎉 Build complete! Check desktop/target/release/bundle/ for the macOS app"
