@@ -3,29 +3,36 @@
 //! This module handles the composition of transaction flows using
 //! semantic discovery and graph-based method chaining.
 
+use super::{
+    ApprovalError, FlowStep, MethodApprovalRequest, MethodApprover, MethodCandidate,
+    TransactionFlow,
+};
+use crate::decimal::parse_amount_from_llm;
+use crate::embedding::Embedding;
+use crate::hnsw::HnswMemoryIndex;
+use crate::llm::LlmClient;
+use crate::models::Method;
+use crate::queries::Queries;
 use std::sync::Arc;
 use surrealdb::RecordId;
-use tracing::{info, debug, trace, warn, error};
-use crate::hnsw::HnswMemoryIndex;
-use crate::embedding::Embedding;
-use crate::queries::Queries;
-use crate::models::Method;
-use crate::llm::LlmClient;
-use crate::decimal::parse_amount_from_llm;
-use super::{TransactionFlow, FlowStep, MethodCandidate, MethodApprovalRequest, MethodApprover, ApprovalError};
+use tracing::{debug, error, info, trace, warn};
 
 /// Errors that can occur during flow composition
 #[derive(Debug, thiserror::Error)]
 pub enum CompositionError {
     #[error("Method selection failed for step {step} with pattern '{pattern}': {reason}")]
-    MethodSelectionFailed { step: usize, pattern: String, reason: String },
-    
+    MethodSelectionFailed {
+        step: usize,
+        pattern: String,
+        reason: String,
+    },
+
     #[error("Embedding generation failed: {0}")]
     EmbeddingFailed(#[from] crate::embedding::EmbeddingError),
-    
+
     #[error("Database query failed: {0}")]
     DatabaseFailed(#[from] anyhow::Error),
-    
+
     #[error("LLM approval failed: {0}")]
     ApprovalFailed(#[from] ApprovalError),
 }
@@ -40,11 +47,7 @@ pub struct FlowComposer {
 }
 
 impl FlowComposer {
-    pub fn new(
-        queries: Arc<Queries>,
-        embedding: Arc<Embedding>,
-        llm_client: LlmClient,
-    ) -> Self {
+    pub fn new(queries: Arc<Queries>, embedding: Arc<Embedding>, llm_client: LlmClient) -> Self {
         info!("🎼 Creating flow composer with LLM approval");
         Self {
             queries,
@@ -74,7 +77,11 @@ impl FlowComposer {
     }
 
     /// Compose an executable flow from a transaction flow
-    pub async fn compose_flow(&self, transaction_flow: &TransactionFlow, hnsw_index: &mut HnswMemoryIndex<'_>) -> Result<ComposedFlow, anyhow::Error> {
+    pub async fn compose_flow(
+        &self,
+        transaction_flow: &TransactionFlow,
+        hnsw_index: &mut HnswMemoryIndex<'_>,
+    ) -> Result<ComposedFlow, anyhow::Error> {
         info!("🎼 Composing flow from transaction pipeline");
         debug!("📋 Pipeline has {} steps", transaction_flow.pipeline.len());
 
@@ -82,13 +89,14 @@ impl FlowComposer {
 
         for (index, step) in transaction_flow.pipeline.iter().enumerate() {
             debug!("🔍 Composing step {}: {}", index + 1, step.action);
-            
+
             // Find method using semantic search
             let method = self.find_method_for_step(step, hnsw_index).await?;
-            
+
             // Validate port compatibility with previous step
             if index > 0 {
-                self.validate_port_compatibility(&composed_steps[index - 1], &method).await?;
+                self.validate_port_compatibility(&composed_steps[index - 1], &method)
+                    .await?;
             }
 
             let composed_step = ComposedStep {
@@ -130,15 +138,23 @@ impl FlowComposer {
 
         let mut composed_steps = Vec::new();
 
-        for (index, (step, step_search_results)) in transaction_flow.pipeline.iter().zip(search_results.iter()).enumerate() {
+        for (index, (step, step_search_results)) in transaction_flow
+            .pipeline
+            .iter()
+            .zip(search_results.iter())
+            .enumerate()
+        {
             debug!("🔍 Composing step {}: {}", index + 1, step.action);
-            
+
             // Find method using pre-computed search results
-            let method = self.find_method_for_step_with_results(step, step_search_results).await?;
-            
+            let method = self
+                .find_method_for_step_with_results(step, step_search_results)
+                .await?;
+
             // Validate port compatibility with previous step
             if index > 0 {
-                self.validate_port_compatibility(&composed_steps[index - 1], &method).await?;
+                self.validate_port_compatibility(&composed_steps[index - 1], &method)
+                    .await?;
             }
 
             let composed_step = ComposedStep {
@@ -166,7 +182,11 @@ impl FlowComposer {
         step: &FlowStep,
         search_results: &[(surrealdb::RecordId, f32)],
     ) -> Result<Method, CompositionError> {
-        debug!("🔍 Searching for method: {} using {} pre-computed results", step.method_pattern, search_results.len());
+        debug!(
+            "🔍 Searching for method: {} using {} pre-computed results",
+            step.method_pattern,
+            search_results.len()
+        );
 
         // Convert to MethodCandidate objects
         let mut candidates = Vec::new();
@@ -174,7 +194,7 @@ impl FlowComposer {
             if *similarity < self.similarity_threshold {
                 continue; // Skip low-quality matches
             }
-            
+
             if let Ok(method) = self.get_method_by_id(method_id).await {
                 candidates.push(MethodCandidate {
                     method,
@@ -194,7 +214,10 @@ impl FlowComposer {
         // Try exact match first (existing logic)
         for candidate in &candidates {
             if candidate.method.program.export == step.method_pattern {
-                debug!("✅ Found exact method match: {}", candidate.method.program.export);
+                debug!(
+                    "✅ Found exact method match: {}",
+                    candidate.method.program.export
+                );
                 return Ok(candidate.method.clone());
             }
         }
@@ -202,8 +225,10 @@ impl FlowComposer {
         // Try pattern matching (existing logic)
         for candidate in &candidates {
             if self.method_matches_pattern(&candidate.method, &step.method_pattern) {
-                debug!("✅ Found pattern match: {} (similarity: {:.3})",
-                    candidate.method.program.export, candidate.similarity_score);
+                debug!(
+                    "✅ Found pattern match: {} (similarity: {:.3})",
+                    candidate.method.program.export, candidate.similarity_score
+                );
                 return Ok(candidate.method.clone());
             }
         }
@@ -212,14 +237,21 @@ impl FlowComposer {
         Err(CompositionError::MethodSelectionFailed {
             step: step.step,
             pattern: step.method_pattern.clone(),
-            reason: format!("No matching methods found among {} candidates", candidates.len()),
+            reason: format!(
+                "No matching methods found among {} candidates",
+                candidates.len()
+            ),
         })
     }
 
     /// Find method for a flow step using semantic search with LLM approval for ambiguity
-    async fn find_method_for_step(&self, step: &FlowStep, hnsw_index: &mut HnswMemoryIndex<'_>) -> Result<Method, CompositionError> {
+    async fn find_method_for_step(
+        &self,
+        step: &FlowStep,
+        hnsw_index: &mut HnswMemoryIndex<'_>,
+    ) -> Result<Method, CompositionError> {
         debug!("🔍 Searching for method: {}", step.method_pattern);
-        
+
         // Generate embedding for semantic hook
         let embedding = self.embedding.embed(&step.semantic_hook).await?;
         trace!("🧠 Generated embedding for semantic hook");
@@ -234,7 +266,7 @@ impl FlowComposer {
             if similarity < self.similarity_threshold {
                 continue; // Skip low-quality matches
             }
-            
+
             if let Ok(method) = self.get_method_by_id(&method_id).await {
                 candidates.push(MethodCandidate {
                     method,
@@ -254,7 +286,10 @@ impl FlowComposer {
         // Try exact match first (existing logic)
         for candidate in &candidates {
             if candidate.method.program.export == step.method_pattern {
-                debug!("✅ Found exact method match: {}", candidate.method.program.export);
+                debug!(
+                    "✅ Found exact method match: {}",
+                    candidate.method.program.export
+                );
                 return Ok(candidate.method.clone());
             }
         }
@@ -262,8 +297,10 @@ impl FlowComposer {
         // Try pattern matching (existing logic)
         for candidate in &candidates {
             if self.method_matches_pattern(&candidate.method, &step.method_pattern) {
-                debug!("✅ Found pattern match: {} (similarity: {:.3})",
-                    candidate.method.program.export, candidate.similarity_score);
+                debug!(
+                    "✅ Found pattern match: {} (similarity: {:.3})",
+                    candidate.method.program.export, candidate.similarity_score
+                );
                 return Ok(candidate.method.clone());
             }
         }
@@ -272,7 +309,10 @@ impl FlowComposer {
         Err(CompositionError::MethodSelectionFailed {
             step: step.step,
             pattern: step.method_pattern.clone(),
-            reason: format!("No matching methods found among {} candidates", candidates.len()),
+            reason: format!(
+                "No matching methods found among {} candidates",
+                candidates.len()
+            ),
         })
     }
 
@@ -281,31 +321,39 @@ impl FlowComposer {
         if candidates.len() < 2 {
             return false;
         }
-        
+
         // Sort by similarity score
         let mut sorted = candidates.to_vec();
         sorted.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
-        
+
         let top_score = sorted[0].similarity_score;
         let second_score = sorted[1].similarity_score;
-        
+
         // Check if scores are close enough to be ambiguous
         let score_diff = top_score - second_score;
-        let is_ambiguous = score_diff < self.ambiguity_threshold && top_score > self.similarity_threshold;
-        
+        let is_ambiguous =
+            score_diff < self.ambiguity_threshold && top_score > self.similarity_threshold;
+
         if is_ambiguous {
-            debug!("🔍 Ambiguity detected: top={:.3}, second={:.3}, diff={:.3}",
-                top_score, second_score, score_diff);
+            debug!(
+                "🔍 Ambiguity detected: top={:.3}, second={:.3}, diff={:.3}",
+                top_score, second_score, score_diff
+            );
         }
-        
+
         is_ambiguous
     }
 
     /// Request LLM approval for ambiguous method selection
-    async fn request_llm_approval(&self, step: &FlowStep, candidates: &[MethodCandidate]) -> Result<Method, CompositionError> {
+    async fn request_llm_approval(
+        &self,
+        step: &FlowStep,
+        candidates: &[MethodCandidate],
+    ) -> Result<Method, CompositionError> {
         let approval_request = MethodApprovalRequest {
             original_query: step.semantic_hook.clone(),
-            step_intent: format!("{} {} to {}",
+            step_intent: format!(
+                "{} {} to {}",
                 step.action,
                 step.from_asset.as_deref().unwrap_or("unknown"),
                 step.to_asset.as_deref().unwrap_or("unknown")
@@ -315,13 +363,18 @@ impl FlowComposer {
             expected_pattern: Some(step.method_pattern.clone()),
         };
 
-        let approval = self.method_approver.request_approval_with_fallback(&approval_request).await?;
-        
+        let approval = self
+            .method_approver
+            .request_approval_with_fallback(&approval_request)
+            .await?;
+
         // Find the approved method
         for candidate in candidates {
             if candidate.method.program.export == approval.selected_method_export {
-                info!("✅ LLM approved method: {} - {}",
-                    approval.selected_method_export, approval.reasoning);
+                info!(
+                    "✅ LLM approved method: {} - {}",
+                    approval.selected_method_export, approval.reasoning
+                );
                 return Ok(candidate.method.clone());
             }
         }
@@ -334,9 +387,9 @@ impl FlowComposer {
     /// Get method by ID from database
     async fn get_method_by_id(&self, method_id: &RecordId) -> Result<Method, anyhow::Error> {
         trace!("🔍 Fetching method from database: {}", method_id);
-        
+
         let method = self.queries.get_method(method_id.clone()).await?;
-        
+
         debug!("✅ Retrieved method: {}", method.program.export);
         Ok(method)
     }
@@ -345,8 +398,8 @@ impl FlowComposer {
     fn method_matches_pattern(&self, method: &Method, pattern: &str) -> bool {
         // Simple pattern matching for now
         // TODO: Implement more sophisticated pattern matching
-        method.program.export.contains(&pattern.to_lowercase()) ||
-        pattern.contains(&method.program.export.to_lowercase())
+        method.program.export.contains(&pattern.to_lowercase())
+            || pattern.contains(&method.program.export.to_lowercase())
     }
 
     /// Validate port compatibility between consecutive steps
@@ -356,21 +409,24 @@ impl FlowComposer {
         current_method: &Method,
     ) -> Result<(), anyhow::Error> {
         debug!("🔗 Validating port compatibility between steps");
-        
+
         // Get output type of previous step
         let previous_output_type = &previous_step.method.out_port.type_uri;
         trace!("📤 Previous output type: {:?}", previous_output_type);
-        
+
         // Get input type of current step
         let current_input_type = &current_method.in_port.type_uri;
         trace!("📥 Current input type: {:?}", current_input_type);
-        
+
         // Check compatibility
         if self.are_types_compatible(previous_output_type, current_input_type) {
             debug!("✅ Port types are compatible");
             Ok(())
         } else {
-            warn!("⚠️  Port type mismatch: {:?} -> {:?}", previous_output_type, current_input_type);
+            warn!(
+                "⚠️  Port type mismatch: {:?} -> {:?}",
+                previous_output_type, current_input_type
+            );
             Err(anyhow::anyhow!("Port type mismatch between steps"))
         }
     }
@@ -385,16 +441,20 @@ impl FlowComposer {
             (Some(output), Some(input)) => {
                 // Simple URI matching for now
                 // TODO: Implement more sophisticated type compatibility checking
-                output.as_str() == input.as_str() ||
-                output.as_str() == "type://u128" && input.as_str() == "type://u128" ||
-                output.as_str().contains("asset") && input.as_str().contains("asset")
+                output.as_str() == input.as_str()
+                    || output.as_str() == "type://u128" && input.as_str() == "type://u128"
+                    || output.as_str().contains("asset") && input.as_str().contains("asset")
             }
             _ => true, // If types are not specified, assume compatibility
         }
     }
 
     /// Prepare input data for a step
-    fn prepare_input_data(&self, step: &FlowStep, previous_steps: &[ComposedStep]) -> Result<serde_json::Value, anyhow::Error> {
+    fn prepare_input_data(
+        &self,
+        step: &FlowStep,
+        previous_steps: &[ComposedStep],
+    ) -> Result<serde_json::Value, anyhow::Error> {
         match step.amount.as_str() {
             "previous_output" => {
                 if let Some(_prev_step) = previous_steps.last() {
@@ -402,21 +462,27 @@ impl FlowComposer {
                     // For now, return placeholder
                     Ok(serde_json::json!({"amount": "previous_output"}))
                 } else {
-                    Err(anyhow::anyhow!("No previous step for 'previous_output' amount"))
+                    Err(anyhow::anyhow!(
+                        "No previous step for 'previous_output' amount"
+                    ))
                 }
             }
-            "user_specified" => {
-                Ok(serde_json::json!({"amount": "user_specified"}))
-            }
+            "user_specified" => Ok(serde_json::json!({"amount": "user_specified"})),
             amount_str => {
                 // Try to parse as decimal amount from LLM
                 match parse_amount_from_llm(amount_str) {
                     Ok(amount_u128) => {
-                        debug!("💰 Parsed amount from LLM: {} -> {}", amount_str, amount_u128);
+                        debug!(
+                            "💰 Parsed amount from LLM: {} -> {}",
+                            amount_str, amount_u128
+                        );
                         Ok(serde_json::json!({"amount": amount_u128}))
                     }
                     Err(e) => {
-                        debug!("⚠️  Could not parse amount '{}' as decimal: {}, using as string", amount_str, e);
+                        debug!(
+                            "⚠️  Could not parse amount '{}' as decimal: {}, using as string",
+                            amount_str, e
+                        );
                         Ok(serde_json::json!({"amount": amount_str}))
                     }
                 }

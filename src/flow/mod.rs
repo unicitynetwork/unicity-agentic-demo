@@ -3,15 +3,15 @@
 //! This module implements the neurosymbolic flow composition engine
 //! that enables multi-step transaction execution through semantic discovery.
 
-pub mod parser;
+pub mod approval;
 pub mod composer;
 pub mod executor;
-pub mod approval;
+pub mod parser;
 
-pub use parser::{TransactionFlow, FlowStep, parse_transaction_flow};
+pub use approval::{ApprovalError, MethodApprovalRequest, MethodApprover, MethodCandidate};
 pub use composer::FlowComposer;
 pub use executor::FlowExecutor;
-pub use approval::{MethodApprover, MethodCandidate, MethodApprovalRequest, ApprovalError};
+pub use parser::{FlowStep, TransactionFlow, parse_transaction_flow};
 
 use serde::{Deserialize, Serialize};
 

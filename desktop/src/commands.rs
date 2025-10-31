@@ -1,11 +1,13 @@
-use serde::{Deserialize, Serialize};
-use tauri::{State, AppHandle, Emitter};
-use tracing::{info, error, debug};
 use crate::app_state::AppState;
-use crate::stt::SpeechRecognizer;
-use crate::error::{WhisperError, WhisperResult};
 use crate::constants::DEFAULT_TRANSACTION_HISTORY_LIMIT;
-use unicity_agentic_demo::{FlowComposer, FlowExecutor, parse_transaction_flow, format_amount_for_display};
+use crate::error::{WhisperError, WhisperResult};
+use crate::stt::SpeechRecognizer;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, State};
+use tracing::{debug, error, info};
+use unicity_agentic_demo::{
+    format_amount_for_display, parse_transaction_flow, FlowComposer, FlowExecutor,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryResult {
@@ -43,15 +45,16 @@ pub struct AgentInfo {
 /// Initialize all agents in the system
 pub async fn initialize_agents(state: &AppState) -> WhisperResult<()> {
     info!("🤖 Registering agents in knowledge graph");
-    
+
     let mut agent_index = state.agent_index.lock().unwrap();
-    
+
     // Register Ping Agent
     unicity_agentic_demo::agents::ping::Ping::create_agent(
         &state.queries,
         state.embedding.clone(),
         &mut agent_index,
-    ).await?;
+    )
+    .await?;
     info!("✅ Ping Agent registered");
 
     // Register Swap Agent
@@ -59,7 +62,8 @@ pub async fn initialize_agents(state: &AppState) -> WhisperResult<()> {
         &state.queries,
         state.embedding.clone(),
         &mut agent_index,
-    ).await?;
+    )
+    .await?;
     info!("✅ Swap Agent registered");
 
     Ok(())
@@ -72,19 +76,22 @@ pub async fn process_query(
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     info!("🔍 Processing query: {}", query);
-    
+
     // Parse query with LLM to get transaction flow
     debug!("🧠 Parsing query with LLM");
     let llm_client = {
         let app = state.app.lock().unwrap();
         app.llm.clone()
     };
-    
+
     let transaction_flow = parse_transaction_flow(&query, &llm_client)
         .await
         .map_err(|e| format!("Failed to parse query: {}", e))?;
-    
-    info!("✅ Parsed transaction flow with {} steps", transaction_flow.pipeline.len());
+
+    info!(
+        "✅ Parsed transaction flow with {} steps",
+        transaction_flow.pipeline.len()
+    );
 
     // Create flow composer and executor
     let _composer = FlowComposer::new(
@@ -92,29 +99,32 @@ pub async fn process_query(
         state.embedding.clone(),
         (*state.llm).clone(),
     );
-    
+
     let ledger = {
         let app = state.app.lock().unwrap();
         app.ledger.clone()
     };
-    
+
     let mut executor = FlowExecutor::new(ledger);
-    
+
     // Compose flow using semantic search and graph traversal
     debug!("🎼 Composing flow");
-    
+
     // We need to handle the HNSW index carefully since it's not Send
     // The solution is to extract all the data we need from the HNSW index first,
     // then release the lock before doing async operations
-    
+
     // First, get the embedding for each step's semantic hook
     let mut step_embeddings = Vec::new();
     for step in &transaction_flow.pipeline {
-        let embedding = state.embedding.embed(&step.semantic_hook).await
+        let embedding = state
+            .embedding
+            .embed(&step.semantic_hook)
+            .await
             .map_err(|e| format!("Failed to generate embedding: {}", e))?;
         step_embeddings.push(embedding);
     }
-    
+
     // Now search the HNSW index for each step (this is synchronous)
     let mut search_results = Vec::new();
     {
@@ -124,19 +134,19 @@ pub async fn process_query(
             search_results.push(results);
         }
     } // Lock is released here
-    
+
     // Now create the composer and compose the flow using the pre-computed search results
-    let composed_flow = _composer.compose_flow_with_search_results(
-        &transaction_flow,
-        &search_results,
-    ).await.map_err(|e| format!("Failed to compose flow: {}", e))?;
-    
+    let composed_flow = _composer
+        .compose_flow_with_search_results(&transaction_flow, &search_results)
+        .await
+        .map_err(|e| format!("Failed to compose flow: {}", e))?;
+
     info!("✅ Flow composed successfully");
 
     // Execute complete flow
     debug!("⚡ Executing flow");
     let execution_result = executor.execute_flow(&composed_flow).await;
-    
+
     // Update app ledger with execution results
     {
         let mut app = state.app.lock().unwrap();
@@ -144,28 +154,31 @@ pub async fn process_query(
         // Update the balances in the app's ledger
         app.ledger.balances = updated_ledger.balances;
     }
-    
+
     match execution_result.success {
         true => {
             info!("✅ Flow executed successfully");
-            
+
             // Generate execution summary with LLM
             debug!("🤖 Generating execution summary");
-            let summary = generate_execution_summary(
-                &query,
-                &execution_result,
-                &(*state.llm).clone()
-            ).await.map_err(|e| e.to_string())?;
-            
-            let steps = execution_result.steps.into_iter().map(|step| ExecutionStep {
-                step: step.step,
-                method_name: step.method_name,
-                input: step.input,
-                output: step.output,
-                success: step.success,
-                error: step.error,
-            }).collect();
-            
+            let summary =
+                generate_execution_summary(&query, &execution_result, &(*state.llm).clone())
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+            let steps = execution_result
+                .steps
+                .into_iter()
+                .map(|step| ExecutionStep {
+                    step: step.step,
+                    method_name: step.method_name,
+                    input: step.input,
+                    output: step.output,
+                    success: step.success,
+                    error: step.error,
+                })
+                .collect();
+
             Ok(QueryResult {
                 success: true,
                 response: summary,
@@ -193,7 +206,7 @@ pub async fn get_balance(
 ) -> Result<BalanceInfo, String> {
     let app = state.app.lock().unwrap();
     let balance = app.get_balance(&asset_id);
-    
+
     Ok(BalanceInfo {
         asset_id: asset_id.clone(),
         balance: format_amount_for_display(balance),
@@ -203,12 +216,10 @@ pub async fn get_balance(
 
 /// Get balances for all known assets
 #[tauri::command]
-pub async fn get_all_balances(
-    state: State<'_, AppState>,
-) -> Result<Vec<BalanceInfo>, String> {
+pub async fn get_all_balances(state: State<'_, AppState>) -> Result<Vec<BalanceInfo>, String> {
     let app = state.app.lock().unwrap();
     let assets = ["USDT", "ALPHA", "BTC", "ETH", "NEAR"];
-    
+
     let mut balances = Vec::new();
     for asset in assets.iter() {
         let balance = app.get_balance(asset);
@@ -218,26 +229,26 @@ pub async fn get_all_balances(
             raw_balance: balance,
         });
     }
-    
+
     Ok(balances)
 }
 
 /// Get information about all registered agents
 #[tauri::command]
-pub async fn get_agents(
-    state: State<'_, AppState>,
-) -> Result<Vec<AgentInfo>, String> {
+pub async fn get_agents(state: State<'_, AppState>) -> Result<Vec<AgentInfo>, String> {
     // Query the database for registered agents
-    let agents = state.queries.get_all_agents()
+    let agents = state
+        .queries
+        .get_all_agents()
         .await
         .map_err(|e| format!("Failed to query agents: {}", e))?;
-    
+
     let mut agent_infos = Vec::new();
     for agent in agents {
         // let methods = state.queries.get_agent_methods(&agent.id)
         //     .await
         //     .map_err(|e| format!("Failed to query agent methods: {}", e))?;
-        
+
         agent_infos.push(AgentInfo {
             id: agent.id.to_string(),
             label: agent.label,
@@ -245,7 +256,7 @@ pub async fn get_agents(
             // methods: methods.into_iter().map(|m| m.name).collect(),
         });
     }
-    
+
     Ok(agent_infos)
 }
 
@@ -256,23 +267,26 @@ pub async fn get_transaction_history(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     // Query the database for transaction history
-    let transactions = state.queries.get_transaction_history(limit.unwrap_or(DEFAULT_TRANSACTION_HISTORY_LIMIT))
+    let transactions = state
+        .queries
+        .get_transaction_history(limit.unwrap_or(DEFAULT_TRANSACTION_HISTORY_LIMIT))
         .await
         .map_err(|e| format!("Failed to query transaction history: {}", e))?;
-    
+
     // Convert transactions to JSON values
-    let json_transactions = transactions.into_iter()
-        .map(|tx| serde_json::to_value(tx).map_err(|e| format!("Failed to serialize transaction: {}", e)))
+    let json_transactions = transactions
+        .into_iter()
+        .map(|tx| {
+            serde_json::to_value(tx).map_err(|e| format!("Failed to serialize transaction: {}", e))
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    
+
     Ok(json_transactions)
 }
 
 /// Start speech recognition
 #[tauri::command]
-pub async fn stt_start(
-    sr: State<'_, SpeechRecognizer>
-) -> Result<(), String> {
+pub async fn stt_start(sr: State<'_, SpeechRecognizer>) -> Result<(), String> {
     info!("🎤 stt_start command called");
     if sr.is_recognizing() {
         info!("🎤 Speech recognition already active");
@@ -284,9 +298,7 @@ pub async fn stt_start(
 }
 
 #[tauri::command]
-pub async fn stt_stop(
-    sr: State<'_, SpeechRecognizer>
-) -> Result<(), String> {
+pub async fn stt_stop(sr: State<'_, SpeechRecognizer>) -> Result<(), String> {
     info!("🛑 stt_stop command called");
     if !sr.is_recognizing() {
         info!("🛑 Speech recognition not active, nothing to stop");
@@ -304,10 +316,12 @@ async fn generate_execution_summary(
     llm_client: &unicity_agentic_demo::LlmClient,
 ) -> WhisperResult<String> {
     info!("🤖 Generating execution summary");
-    
-    let execution_json = serde_json::to_string_pretty(execution_result).expect("Failed to serialize execution result");
-    
-    let prompt = format!(r#"
+
+    let execution_json = serde_json::to_string_pretty(execution_result)
+        .expect("Failed to serialize execution result");
+
+    let prompt = format!(
+        r#"
 You are explaining transaction execution results to a user.
 Provide a natural, clear explanation of what happened.
 
@@ -322,7 +336,9 @@ When mentioning amounts, format them in a user-friendly way:
 - Use "0.5" instead of "0.50000000"
 - Use "1.23456789" for amounts with non-zero fractional parts
 
-Be concise but comprehensive."#, execution_json, original_query);
+Be concise but comprehensive."#,
+        execution_json, original_query
+    );
 
     let response = llm_client.generate_response(&prompt).await;
 
@@ -332,7 +348,10 @@ Be concise but comprehensive."#, execution_json, original_query);
             Ok(response.response)
         }
         false => {
-            error!("❌ Failed to generate execution summary: {:?}", response.error);
+            error!(
+                "❌ Failed to generate execution summary: {:?}",
+                response.error
+            );
             Ok("✅ Transaction completed successfully, but summary generation failed.".to_string())
         }
     }

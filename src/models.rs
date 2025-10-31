@@ -5,9 +5,9 @@ mod agent;
 mod method;
 mod port;
 
-pub use agent::{CreateAgent, Agent};
-pub use method::{CreateMethod, Visibility, ExecKind, ProgramRef, ProgramAbi, Method};
-pub use port::{CreatePort, Port, Channel};
+pub use agent::{Agent, CreateAgent};
+pub use method::{CreateMethod, ExecKind, Method, ProgramAbi, ProgramRef, Visibility};
+pub use port::{Channel, CreatePort, Port};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {

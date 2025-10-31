@@ -3,10 +3,10 @@
 //! This module handles the LLM-based parsing of user queries into
 //! structured transaction flows using semantic understanding.
 
-use serde::{Deserialize, Serialize};
-use tracing::{info, debug, trace, warn, error};
-use crate::llm::LlmClient;
 use crate::decimal::DECIMAL_PLACES;
+use crate::llm::LlmClient;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, trace, warn};
 
 /// Transaction flow parsed from natural language query
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,32 +35,38 @@ pub async fn parse_transaction_flow(
     llm_client: &LlmClient,
 ) -> Result<TransactionFlow, anyhow::Error> {
     info!("🔍 Parsing transaction flow from query: {}", query);
-    
+
     let prompt = create_transaction_prompt(query);
     trace!("📝 Generated prompt for LLM");
-    
+
     let response = llm_client.generate_response(&prompt).await;
-    
+
     match response.success {
         true => {
             debug!("📥 Received LLM response for flow parsing");
             trace!("🤖 LLM response: {}", response.response);
-            
+
             // Extract JSON from response
             let json_str = extract_json_from_response(&response.response)?;
             trace!("📄 Extracted JSON: {}", json_str);
-            
+
             // Parse JSON into TransactionFlow
             let flow: TransactionFlow = serde_json::from_str(&json_str)
                 .map_err(|e| anyhow::anyhow!("Failed to parse transaction flow JSON: {}", e))?;
-            
-            debug!("✅ Successfully parsed transaction flow with {} steps", flow.pipeline.len());
+
+            debug!(
+                "✅ Successfully parsed transaction flow with {} steps",
+                flow.pipeline.len()
+            );
             info!("🎯 Intent: {}", flow.intent);
-            
+
             Ok(flow)
         }
         false => {
-            error!("❌ LLM request failed for flow parsing: {:?}", response.error);
+            error!(
+                "❌ LLM request failed for flow parsing: {:?}",
+                response.error
+            );
             Err(anyhow::anyhow!("LLM request failed: {:?}", response.error))
         }
     }
@@ -68,7 +74,8 @@ pub async fn parse_transaction_flow(
 
 /// Create the transaction flow parsing prompt
 fn create_transaction_prompt(query: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
 You are a transaction flow analyzer for a multi-agent financial system. Parse user queries into executable transaction pipelines. Respond with JSON NOT in a code block.
 
 IMPORTANT: All amounts use {} decimal places internally. When parsing amounts, preserve the exact decimal format provided by the user.
@@ -200,13 +207,15 @@ RULES:
 - Be explicit about asset conversions
 - Use financial terminology for semantic richness
 - PRESERVE DECIMAL PRECISION: Always format amounts with {} decimal places
-- Respond with JSON only, no code blocks"#, DECIMAL_PLACES, query, DECIMAL_PLACES)
+- Respond with JSON only, no code blocks"#,
+        DECIMAL_PLACES, query, DECIMAL_PLACES
+    )
 }
 
 /// Extract JSON from LLM response (handles potential markdown code blocks)
 fn extract_json_from_response(response: &str) -> Result<String, anyhow::Error> {
     trace!("🔍 Extracting JSON from LLM response");
-    
+
     // Look for JSON in code blocks first
     if let Some(start) = response.find("```json") {
         let start = start + 7; // Skip "```json"
@@ -216,7 +225,7 @@ fn extract_json_from_response(response: &str) -> Result<String, anyhow::Error> {
             return Ok(json_str.to_string());
         }
     }
-    
+
     // Look for JSON between { and }
     if let Some(start) = response.find('{') {
         if let Some(end) = response.rfind('}') {
@@ -225,7 +234,7 @@ fn extract_json_from_response(response: &str) -> Result<String, anyhow::Error> {
             return Ok(json_str.to_string());
         }
     }
-    
+
     // If no JSON found, return the whole response
     warn!("⚠️  Could not find JSON delimiters, using full response");
     Ok(response.trim().to_string())
@@ -243,12 +252,18 @@ mod tests {
         {"tool": "transaction_flow", "intent": "test"}
         ```
         "#;
-        
+
         let result = extract_json_from_response(response_with_code_block).unwrap();
-        assert_eq!(result, "{\"tool\": \"transaction_flow\", \"intent\": \"test\"}");
-        
+        assert_eq!(
+            result,
+            "{\"tool\": \"transaction_flow\", \"intent\": \"test\"}"
+        );
+
         let response_direct = r#"{"tool": "transaction_flow", "intent": "test"}"#;
         let result = extract_json_from_response(response_direct).unwrap();
-        assert_eq!(result, "{\"tool\": \"transaction_flow\", \"intent\": \"test\"}");
+        assert_eq!(
+            result,
+            "{\"tool\": \"transaction_flow\", \"intent\": \"test\"}"
+        );
     }
 }

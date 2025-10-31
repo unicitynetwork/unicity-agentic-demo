@@ -3,12 +3,12 @@
 //! This module handles execution of composed flows with proper
 //! state management and error handling.
 
-use tracing::{info, debug, trace, warn, error};
-use crate::ledger::Ledger;
-use crate::executor::exec_local;
-use crate::decimal::format_amount_for_display;
 use super::{ExecutionResult, StepResult};
+use crate::decimal::format_amount_for_display;
+use crate::executor::exec_local;
 use crate::flow::composer::{ComposedFlow, ComposedStep};
+use crate::ledger::Ledger;
+use tracing::{debug, error, info, trace, warn};
 
 /// Flow executor for running composed transaction flows
 pub struct FlowExecutor {
@@ -30,10 +30,16 @@ impl FlowExecutor {
         let mut current_state: Option<serde_json::Value> = None;
 
         for (index, composed_step) in flow.steps.iter().enumerate() {
-            debug!("⚡ Executing step {}: {}", index + 1, composed_step.method.program.export);
-            
-            let step_result = self.execute_step(composed_step, current_state.as_ref()).await;
-            
+            debug!(
+                "⚡ Executing step {}: {}",
+                index + 1,
+                composed_step.method.program.export
+            );
+
+            let step_result = self
+                .execute_step(composed_step, current_state.as_ref())
+                .await;
+
             match step_result {
                 Ok(result) => {
                     debug!("✅ Step {} completed successfully", index + 1);
@@ -68,7 +74,10 @@ impl FlowExecutor {
         composed_step: &ComposedStep,
         previous_state: Option<&serde_json::Value>,
     ) -> Result<StepResult, anyhow::Error> {
-        trace!("⚡ Executing method: {}", composed_step.method.program.export);
+        trace!(
+            "⚡ Executing method: {}",
+            composed_step.method.program.export
+        );
 
         // Prepare input data
         let input_data = self.prepare_step_input(composed_step, previous_state)?;
@@ -111,10 +120,12 @@ impl FlowExecutor {
                 if let Some(extracted) = self.extract_amount_from_output(prev_state) {
                     debug!("💰 Using previous output amount: {}", extracted);
                     if let Ok(amount) = extracted.parse::<u128>() {
-                        input_data["amount"] = serde_json::Value::Number(
-                            serde_json::Number::from(amount as i64)
+                        input_data["amount"] =
+                            serde_json::Value::Number(serde_json::Number::from(amount as i64));
+                        debug!(
+                            "💰 Converted previous output: {} -> {} (internal)",
+                            extracted, amount
                         );
-                        debug!("💰 Converted previous output: {} -> {} (internal)", extracted, amount);
                     }
                 } else {
                     warn!("⚠️  Could not extract amount from previous output");
@@ -129,7 +140,9 @@ impl FlowExecutor {
     /// Check if a step needs previous output as input
     fn step_needs_previous_output(&self, composed_step: &ComposedStep) -> bool {
         // Check if the input data contains "previous_output" placeholder
-        composed_step.input_data.get("amount")
+        composed_step
+            .input_data
+            .get("amount")
             .and_then(|v| v.as_str())
             .map(|s| s == "previous_output")
             .unwrap_or(false)
@@ -162,21 +175,33 @@ impl FlowExecutor {
 
         // If output is a number, return it (this is the key fix for swap outputs)
         if let Some(n) = output.as_u64() {
-            debug!("💰 Found number output: {} (internal u128 representation)", n);
+            debug!(
+                "💰 Found number output: {} (internal u128 representation)",
+                n
+            );
             // Convert to decimal format for display/logging
             let amount_u128 = n as u128;
             let display_amount = format_amount_for_display(amount_u128);
-            debug!("💰 Formatted for display: {} -> {}", amount_u128, display_amount);
+            debug!(
+                "💰 Formatted for display: {} -> {}",
+                amount_u128, display_amount
+            );
             return Some(amount_u128.to_string());
         }
 
         // Also check for i64 numbers (JSON numbers can be i64)
         if let Some(n) = output.as_i64() {
-            debug!("💰 Found i64 number output: {} (internal u128 representation)", n);
+            debug!(
+                "💰 Found i64 number output: {} (internal u128 representation)",
+                n
+            );
             // Convert to decimal format for display/logging
             let amount_u128 = n as u128;
             let display_amount = format_amount_for_display(amount_u128);
-            debug!("💰 Formatted for display: {} -> {}", amount_u128, display_amount);
+            debug!(
+                "💰 Formatted for display: {} -> {}",
+                amount_u128, display_amount
+            );
             return Some(amount_u128.to_string());
         }
 

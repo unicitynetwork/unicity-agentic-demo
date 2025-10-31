@@ -1,5 +1,5 @@
-use embed_anything::embeddings::embed::{EmbeddingResult, TextEmbedder};
 use embed_anything::Dtype;
+use embed_anything::embeddings::embed::{EmbeddingResult, TextEmbedder};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -38,7 +38,7 @@ impl Embedding {
             None,
             Some(Dtype::F32),
         )
-            .map_err(|e| EmbeddingError::ModelLoadError(e.to_string()))?;
+        .map_err(|e| EmbeddingError::ModelLoadError(e.to_string()))?;
 
         Ok(Self {
             text_embedder,

@@ -1,8 +1,8 @@
+use crate::models::CreatePort;
+use crate::models::agent::AgentId;
 use fluent_uri::Uri;
 use serde::{Deserialize, Serialize};
 use surrealdb::RecordId;
-use crate::models::agent::AgentId;
-use crate::models::CreatePort;
 
 pub type MethodId = RecordId;
 pub type CodeUri = Uri<String>;
@@ -23,10 +23,10 @@ pub enum ProgramAbi {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProgramRef {
-    pub module_uri: CodeUri,   // where to fetch/execute the program (file://, http://, etc.)
-    pub export: String,        // symbol or route name, e.g., "add", "to_upper", "main"
-    pub abi: ProgramAbi,       // LocalFn | HttpJson | WasiJsonStdio | ComponentBytesIo
-    pub checksum: String,      // integrity hash of the program bytes (e.g., blake3/sha256 hex)
+    pub module_uri: CodeUri, // where to fetch/execute the program (file://, http://, etc.)
+    pub export: String,      // symbol or route name, e.g., "add", "to_upper", "main"
+    pub abi: ProgramAbi,     // LocalFn | HttpJson | WasiJsonStdio | ComponentBytesIo
+    pub checksum: String,    // integrity hash of the program bytes (e.g., blake3/sha256 hex)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

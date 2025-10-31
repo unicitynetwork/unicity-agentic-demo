@@ -1,9 +1,9 @@
 use kalosm::sound::*;
+use std::env;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info};
-use std::path::PathBuf;
-use std::env;
 
 pub struct SpeechRecognizer {
     app_handle: AppHandle,
@@ -18,17 +18,11 @@ impl SpeechRecognizer {
         match setup_whisper_cache() {
             Ok(cache_dir) => {
                 info!("📁 Cache directory: {}", cache_dir.display());
-                let _ = app_handle.emit(
-                    "stt://log",
-                    format!("📁 Cache: {}", cache_dir.display())
-                );
+                let _ = app_handle.emit("stt://log", format!("📁 Cache: {}", cache_dir.display()));
             }
             Err(e) => {
                 error!("⚠️ Failed to setup cache directory: {}", e);
-                let _ = app_handle.emit(
-                    "stt://log",
-                    format!("⚠️ Cache setup failed: {}", e)
-                );
+                let _ = app_handle.emit("stt://log", format!("⚠️ Cache setup failed: {}", e));
                 // Continue anyway - will use default cache
             }
         }
@@ -81,7 +75,9 @@ impl SpeechRecognizer {
 
     async fn initialize_recognition(&self) {
         info!("🎤 Initializing speech recognition engine");
-        let _ = self.app_handle.emit("stt://log", "🎤 Initializing speech recognition engine");
+        let _ = self
+            .app_handle
+            .emit("stt://log", "🎤 Initializing speech recognition engine");
 
         let needs_loading = {
             let guard = self.model.lock().unwrap();
@@ -110,7 +106,9 @@ impl SpeechRecognizer {
                     let _ = self.app_handle.emit("stt://log", "✅ Model loaded");
                 }
                 Err(e) => {
-                    let _ = self.app_handle.emit("stt://log", format!("❌ Model error: {}", e));
+                    let _ = self
+                        .app_handle
+                        .emit("stt://log", format!("❌ Model error: {}", e));
                     return;
                 }
             }
@@ -122,7 +120,9 @@ impl SpeechRecognizer {
         self.start_processing_loop();
 
         info!("✅ Model and audio setup complete");
-        let _ = self.app_handle.emit("stt://log", "✅ Model and audio setup complete");
+        let _ = self
+            .app_handle
+            .emit("stt://log", "✅ Model and audio setup complete");
     }
 
     fn start_processing_loop(&self) {
@@ -138,7 +138,8 @@ impl SpeechRecognizer {
             let model = {
                 let guard = model.lock().unwrap();
                 guard.as_ref().cloned() // Need to clone the model
-            }.expect("Model should be loaded");
+            }
+            .expect("Model should be loaded");
 
             // Transcribe once
             let mut transcriptions = stream.transcribe(model);
@@ -148,7 +149,9 @@ impl SpeechRecognizer {
                 // Check flag
                 let is_active = *is_active.lock().unwrap();
 
-                if !is_active { break; }
+                if !is_active {
+                    break;
+                }
 
                 // Process segment
                 let text = segment.text().trim();
@@ -175,7 +178,8 @@ impl SpeechRecognizer {
 /// # Returns
 /// The path to the cache directory that was configured
 pub fn setup_whisper_cache() -> Result<PathBuf, std::io::Error> {
-    let cache_dir: PathBuf = if let Some(dir) = env::var_os("WHISPER_CACHE_DIR").map(PathBuf::from) {
+    let cache_dir: PathBuf = if let Some(dir) = env::var_os("WHISPER_CACHE_DIR").map(PathBuf::from)
+    {
         dir
     } else if let Some(base) = dirs::home_dir() {
         base.join(".unicity-agentic-demo").join("whisper-cache")
@@ -280,4 +284,3 @@ mod tests {
         assert_eq!(format_bytes(1536 * 1024 * 1024), "1.50 GB");
     }
 }
-

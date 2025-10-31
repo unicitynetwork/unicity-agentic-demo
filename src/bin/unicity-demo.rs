@@ -1,12 +1,11 @@
 use clap::Parser;
 use std::sync::Arc;
 use surrealdb::Surreal;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::{
-    App, LlmClient, Queries, Embedding, HnswMemoryIndex,
-    FlowComposer, FlowExecutor, parse_transaction_flow,
-    format_amount_for_display, DECIMAL_FACTOR
+    App, DECIMAL_FACTOR, Embedding, FlowComposer, FlowExecutor, HnswMemoryIndex, LlmClient,
+    Queries, format_amount_for_display, parse_transaction_flow,
 };
 
 /// Format amount with proper decimal places for display
@@ -16,7 +15,7 @@ pub fn format_amount(amount: u128, decimals: u32) -> String {
     }
     let divisor = 10u128.pow(decimals);
     let whole = amount / divisor;
-    let frac  = amount % divisor;
+    let frac = amount % divisor;
     // pad the fractional part with leading zeros up to `decimals` width
     format!("{whole}.{frac:0>width$}", width = decimals as usize)
 }
@@ -70,11 +69,14 @@ async fn main() -> Result<(), anyhow::Error> {
     // 🏗️ Initialize app
     info!("🏗️ Initializing application");
     let mut app = App::new(db, llm_client.api_key.clone())?;
-    
+
     // 💰 Initialize ledger with 100,000 USDT (8 decimal places)
     info!("💰 Initializing ledger with 100,000 USDT");
     app.set_balance("USDT", 100_000 * DECIMAL_FACTOR); // 8 decimal places: 100,000.00000000 USDT
-    info!("✅ Ledger initialized: {} USDT", format_amount_for_display(app.get_balance("USDT")));
+    info!(
+        "✅ Ledger initialized: {} USDT",
+        format_amount_for_display(app.get_balance("USDT"))
+    );
 
     // 🤖 Register agents
     info!("🤖 Registering agents in knowledge graph");
@@ -89,22 +91,23 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 fn init_tracing(log_level: &str) -> Result<(), anyhow::Error> {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            // Only show logs from our application, filtering out dependencies
-            tracing_subscriber::EnvFilter::new(format!("unicity_agentic_demo={log_level}"))
-        });
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        // Only show logs from our application, filtering out dependencies
+        tracing_subscriber::EnvFilter::new(format!("unicity_agentic_demo={log_level}"))
+    });
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer()
-            .with_target(false)
-            .with_thread_ids(false)
-            .with_thread_names(false)
-            .with_file(false)
-            .with_line_number(false)
-            .with_ansi(true)
-            .compact())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_thread_names(false)
+                .with_file(false)
+                .with_line_number(false)
+                .with_ansi(true)
+                .compact(),
+        )
         .init();
 
     Ok(())
@@ -117,20 +120,14 @@ async fn register_agents(
 ) -> Result<(), anyhow::Error> {
     // 🏓 Register Ping Agent
     info!("🏓 Registering Ping Agent");
-    unicity_agentic_demo::agents::ping::Ping::create_agent(
-        queries,
-        embedding.clone(),
-        hnsw_index,
-    ).await?;
+    unicity_agentic_demo::agents::ping::Ping::create_agent(queries, embedding.clone(), hnsw_index)
+        .await?;
     info!("✅ Ping Agent registered");
 
     // 💱 Register Swap Agent
     info!("💱 Registering Swap Agent");
-    unicity_agentic_demo::agents::swap::Swap::create_agent(
-        queries,
-        embedding.clone(),
-        hnsw_index,
-    ).await?;
+    unicity_agentic_demo::agents::swap::Swap::create_agent(queries, embedding.clone(), hnsw_index)
+        .await?;
     info!("✅ Swap Agent registered");
 
     Ok(())
@@ -142,27 +139,30 @@ async fn start_interactive_demo(
     hnsw_index: &mut HnswMemoryIndex<'_>,
 ) -> Result<(), anyhow::Error> {
     println!("\n🎉 Unicity Agentic Demo Ready!");
-    println!("💰 Available balance: {} USDT", format_amount_for_display(app.get_balance("USDT")));
+    println!(
+        "💰 Available balance: {} USDT",
+        format_amount_for_display(app.get_balance("USDT"))
+    );
     println!("\n📝 Enter your query (or 'quit' to exit):");
-    
+
     loop {
         print!("\n❓ > ");
         use std::io::{self, Write};
         io::stdout().flush()?;
-        
+
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         let input = input.trim();
-        
+
         if input.eq_ignore_ascii_case("quit") || input.eq_ignore_ascii_case("exit") {
             info!("👋 Shutting down demo");
             break;
         }
-        
+
         if input.is_empty() {
             continue;
         }
-        
+
         // Process query
         match process_query(input, app, queries.clone(), hnsw_index).await {
             Ok(response) => {
@@ -174,7 +174,7 @@ async fn start_interactive_demo(
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -185,21 +185,20 @@ async fn process_query(
     hnsw_index: &mut HnswMemoryIndex<'_>,
 ) -> Result<String, anyhow::Error> {
     info!("🔍 Processing query: {}", query);
-    
+
     // 1. Parse query with LLM to get transaction flow
     debug!("🧠 Parsing query with LLM");
     let transaction_flow = parse_transaction_flow(query, &app.llm).await?;
-    info!("✅ Parsed transaction flow with {} steps", transaction_flow.pipeline.len());
+    info!(
+        "✅ Parsed transaction flow with {} steps",
+        transaction_flow.pipeline.len()
+    );
 
     // 2. Create flow composer and executor
-    let composer = FlowComposer::new(
-        queries.clone(),
-        app.embedding.clone(),
-        app.llm.clone(),
-    );
-    
+    let composer = FlowComposer::new(queries.clone(), app.embedding.clone(), app.llm.clone());
+
     let mut executor = FlowExecutor::new(app.ledger.clone());
-    
+
     // 3. Compose flow using semantic search and graph traversal
     debug!("🎼 Composing flow");
     let composed_flow = composer.compose_flow(&transaction_flow, hnsw_index).await?;
@@ -208,22 +207,18 @@ async fn process_query(
     // 4. Execute complete flow
     debug!("⚡ Executing flow");
     let execution_result = executor.execute_flow(&composed_flow).await;
-    
+
     // Update app ledger with execution results
     app.ledger = executor.get_ledger();
-    
+
     match execution_result.success {
         true => {
             info!("✅ Flow executed successfully");
-            
+
             // 5. Summarize results with LLM
             debug!("🤖 Generating execution summary");
-            let summary = generate_execution_summary(
-                query,
-                &execution_result,
-                &app.llm
-            ).await?;
-            
+            let summary = generate_execution_summary(query, &execution_result, &app.llm).await?;
+
             Ok(summary)
         }
         false => {
@@ -240,10 +235,11 @@ async fn generate_execution_summary(
     llm_client: &LlmClient,
 ) -> Result<String, anyhow::Error> {
     info!("🤖 Generating execution summary");
-    
+
     let execution_json = serde_json::to_string_pretty(execution_result)?;
-    
-    let prompt = format!(r#"
+
+    let prompt = format!(
+        r#"
 You are explaining transaction execution results to a user.
 Provide a natural, clear explanation of what happened.
 
@@ -258,17 +254,22 @@ When mentioning amounts, format them in a user-friendly way:
 - Use "0.5" instead of "0.50000000"
 - Use "1.23456789" for amounts with non-zero fractional parts
 
-Be concise but comprehensive."#, execution_json, original_query);
+Be concise but comprehensive."#,
+        execution_json, original_query
+    );
 
     let response = llm_client.generate_response(&prompt).await;
-    
+
     match response.success {
         true => {
             info!("✅ Execution summary generated");
             Ok(response.response)
         }
         false => {
-            error!("❌ Failed to generate execution summary: {:?}", response.error);
+            error!(
+                "❌ Failed to generate execution summary: {:?}",
+                response.error
+            );
             Ok("✅ Transaction completed successfully, but summary generation failed.".to_string())
         }
     }

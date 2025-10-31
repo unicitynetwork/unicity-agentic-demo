@@ -4,7 +4,7 @@
 //! for generating responses when operations succeed.
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, debug, trace, warn, error};
+use tracing::{debug, error, info, trace, warn};
 
 /// LLM client for generating natural language responses
 #[derive(Clone)]
@@ -69,12 +69,12 @@ impl LlmClient {
         info!("🤖 Creating new LLM client");
         debug!("🔧 API endpoint: https://api.z.ai/api/coding/paas/v4/chat/completions");
         debug!("🧠 Model: GLM-4.6");
-        
+
         let client = reqwest::Client::new();
         trace!("🌐 HTTP client initialized");
-        
+
         info!("✅ LLM client created successfully");
-        
+
         Self {
             base_url: "https://api.z.ai/api/coding/paas/v4/chat/completions".to_string(),
             model: "GLM-4.6".to_string(),
@@ -97,7 +97,7 @@ impl LlmClient {
     pub async fn generate_response(&self, prompt: &str) -> LlmResult {
         info!("🤖 Generating LLM response");
         trace!("📝 Prompt length: {} chars", prompt.len());
-        
+
         let request = LLMRequest {
             model: self.model.clone(),
             messages: vec![
@@ -123,7 +123,7 @@ impl LlmClient {
                     debug!("🔢 Tokens used: {:?}", tokens_used);
                     debug!("🏁 Finish reason: {:?}", choice.finish_reason);
                     trace!("📄 Response length: {} chars", choice.message.content.len());
-                    
+
                     info!("✅ LLM response generated successfully");
                     LlmResult {
                         success: true,
@@ -159,8 +159,11 @@ impl LlmClient {
     /// Send HTTP request to LLM API
     async fn send_request(&self, request: LLMRequest) -> Result<LLMResponse, reqwest::Error> {
         trace!("📡 Sending HTTP request to: {}", self.base_url);
-        trace!("🔑 Using API key: {}...", &self.api_key[..8.min(self.api_key.len())]);
-        
+        trace!(
+            "🔑 Using API key: {}...",
+            &self.api_key[..8.min(self.api_key.len())]
+        );
+
         let response = self
             .client
             .post(&self.base_url)
@@ -173,7 +176,7 @@ impl LlmClient {
         trace!("📡 HTTP request completed, parsing response");
         let parsed_response = response.json::<LLMResponse>().await?;
         trace!("✅ Response parsed successfully");
-        
+
         Ok(parsed_response)
     }
 }

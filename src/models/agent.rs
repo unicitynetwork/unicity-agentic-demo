@@ -1,6 +1,6 @@
+use crate::models::method::MethodId;
 use serde::{Deserialize, Serialize};
 use surrealdb::RecordId;
-use crate::models::method::MethodId;
 
 pub type AgentId = RecordId;
 

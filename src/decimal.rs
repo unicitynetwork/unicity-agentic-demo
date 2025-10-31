@@ -12,7 +12,7 @@ pub const DECIMAL_PLACES: u32 = 8;
 pub const DECIMAL_FACTOR: u128 = 100_000_000;
 
 /// Convert human-readable decimal string to internal u128 representation
-/// 
+///
 /// Examples:
 /// - "100.00000000" -> 100_000_000_000
 /// - "100" -> 100_000_000_000
@@ -20,33 +20,37 @@ pub const DECIMAL_FACTOR: u128 = 100_000_000;
 /// - "1.23456789" -> 123_456_789
 pub fn parse_decimal_amount(amount_str: &str) -> Result<u128, anyhow::Error> {
     debug!("🔍 Parsing decimal amount: {}", amount_str);
-    
+
     // Remove any whitespace
     let amount_str = amount_str.trim();
-    
+
     // Handle empty string
     if amount_str.is_empty() {
         return Err(anyhow::anyhow!("Empty amount string"));
     }
-    
+
     // Parse as f64 first to handle decimal point
-    let amount_f64 = amount_str.parse::<f64>()
+    let amount_f64 = amount_str
+        .parse::<f64>()
         .map_err(|e| anyhow::anyhow!("Failed to parse amount as number: {}", e))?;
-    
+
     // Check for negative amounts
     if amount_f64 < 0.0 {
-        return Err(anyhow::anyhow!("Negative amounts not supported: {}", amount_f64));
+        return Err(anyhow::anyhow!(
+            "Negative amounts not supported: {}",
+            amount_f64
+        ));
     }
-    
+
     // Convert to u128 with 8 decimal places
     let amount_u128 = (amount_f64 * DECIMAL_FACTOR as f64).round() as u128;
-    
+
     trace!("✅ Parsed {} -> {}", amount_str, amount_u128);
     Ok(amount_u128)
 }
 
 /// Convert internal u128 representation to human-readable decimal string
-/// 
+///
 /// Examples:
 /// - 100_000_000_000 -> "100.00000000"
 /// - 50_000_000 -> "0.50000000"
@@ -58,7 +62,7 @@ pub fn format_decimal_amount(amount: u128) -> String {
 }
 
 /// Convert internal u128 representation to human-readable decimal string with trailing zeros trimmed
-/// 
+///
 /// Examples:
 /// - 100_000_000_000 -> "100"
 /// - 50_000_000 -> "0.5"
@@ -66,7 +70,7 @@ pub fn format_decimal_amount(amount: u128) -> String {
 pub fn format_decimal_amount_trimmed(amount: u128) -> String {
     let whole = amount / DECIMAL_FACTOR;
     let frac = amount % DECIMAL_FACTOR;
-    
+
     if frac == 0 {
         whole.to_string()
     } else {
@@ -101,12 +105,15 @@ mod tests {
         // Test whole numbers
         assert_eq!(parse_decimal_amount("100").unwrap(), 100_000_000_000);
         assert_eq!(parse_decimal_amount("0").unwrap(), 0);
-        
+
         // Test decimal numbers
-        assert_eq!(parse_decimal_amount("100.00000000").unwrap(), 100_000_000_000);
+        assert_eq!(
+            parse_decimal_amount("100.00000000").unwrap(),
+            100_000_000_000
+        );
         assert_eq!(parse_decimal_amount("0.5").unwrap(), 50_000_000);
         assert_eq!(parse_decimal_amount("1.23456789").unwrap(), 123_456_789);
-        
+
         // Test edge cases
         assert_eq!(parse_decimal_amount("0.00000001").unwrap(), 1);
         assert_eq!(parse_decimal_amount("0.00000000").unwrap(), 0);
@@ -132,13 +139,13 @@ mod tests {
     fn test_roundtrip_conversion() {
         let test_amounts = vec![
             "100",
-            "100.00000000", 
+            "100.00000000",
             "0.5",
             "1.23456789",
             "0.00000001",
             "0",
         ];
-        
+
         for amount_str in test_amounts {
             let parsed = parse_decimal_amount(amount_str).unwrap();
             let formatted = format_decimal_amount(parsed);

@@ -1,22 +1,22 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod commands;
 mod app_state;
-mod stt;
-mod error;
+mod commands;
 mod constants;
+mod error;
+mod stt;
 
+use crate::stt::SpeechRecognizer;
+use app_state::AppState;
+use constants::INITIAL_USDT_BALANCE;
+use error::WhisperResult;
 use std::sync::Arc;
 use surrealdb::Surreal;
 use tauri::Manager;
-use tracing::{info, error};
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::App;
-use app_state::AppState;
-use error::WhisperResult;
-use constants::INITIAL_USDT_BALANCE;
-use crate::stt::SpeechRecognizer;
 
 #[tokio::main]
 async fn main() -> WhisperResult<()> {
@@ -25,7 +25,8 @@ async fn main() -> WhisperResult<()> {
 
     // Initialize database
     info!("🚀 Initializing database");
-    let db: Arc<Surreal<surrealdb::engine::local::Db>> = Arc::new(Surreal::new::<surrealdb::engine::local::Mem>(()).await?);
+    let db: Arc<Surreal<surrealdb::engine::local::Db>> =
+        Arc::new(Surreal::new::<surrealdb::engine::local::Mem>(()).await?);
     db.use_ns("unicity").use_db("demo").await?;
     info!("✅ Database initialized");
 
@@ -35,9 +36,12 @@ async fn main() -> WhisperResult<()> {
     // Initialize the app
     info!("🏗️ Initializing application");
     let mut app = App::new(db.clone(), api_key.clone())?;
-    
+
     // Initialize ledger with initial USDT balance
-    app.set_balance("USDT", (INITIAL_USDT_BALANCE as u128) * unicity_agentic_demo::DECIMAL_FACTOR);
+    app.set_balance(
+        "USDT",
+        (INITIAL_USDT_BALANCE as u128) * unicity_agentic_demo::DECIMAL_FACTOR,
+    );
     info!("✅ App initialized with {} USDT", INITIAL_USDT_BALANCE);
 
     // Create shared app state
@@ -75,7 +79,7 @@ async fn main() -> WhisperResult<()> {
     // Cleanup STT resources on shutdown
     // #[cfg(target_os = "macos")]
     // stt::cleanup();
-    
+
     Ok(())
 }
 

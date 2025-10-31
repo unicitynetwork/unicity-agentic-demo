@@ -1,10 +1,12 @@
-use std::sync::Arc;
-use fluent_uri::Uri;
 use crate::embedding::Embedding;
 use crate::hnsw::HnswMemoryIndex;
 use crate::ledger::Ledger;
-use crate::models::{Channel, CreateAgent, CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility};
+use crate::models::{
+    Channel, CreateAgent, CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility,
+};
 use crate::queries::Queries;
+use fluent_uri::Uri;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConversionRequest {
@@ -29,7 +31,11 @@ pub struct Converted {
 pub struct Swap;
 
 impl Swap {
-    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>, hnsw: &mut HnswMemoryIndex<'_>) -> Result<(), anyhow::Error> {
+    pub async fn create_agent(
+        queries: &Queries,
+        embedding: Arc<Embedding>,
+        hnsw: &mut HnswMemoryIndex<'_>,
+    ) -> Result<(), anyhow::Error> {
         // 1) Create the parent "Swap Agent"
         let create_agent = CreateAgent {
             label: "SwapAgent".to_string(),
@@ -48,7 +54,9 @@ impl Swap {
         // 3) Generate one Method for every ordered pair FROM != TO
         for &from in &assets {
             for &to in &assets {
-                if from == to { continue; }
+                if from == to {
+                    continue;
+                }
 
                 // Human-friendly labels and descriptions
                 let label = format!("Swap {from}→{to}");
@@ -61,19 +69,21 @@ impl Swap {
                 let embedding = embedding.embed(&description).await?;
 
                 // Endpoints (unique, but simple and predictable)
-                let in_ep  = Uri::parse(format!("agent://SwapAgent/swap#{from}_{to}_in"))?.to_owned();
-                let out_ep = Uri::parse(format!("agent://SwapAgent/swap#{from}_{to}_out"))?.to_owned();
+                let in_ep =
+                    Uri::parse(format!("agent://SwapAgent/swap#{from}_{to}_in"))?.to_owned();
+                let out_ep =
+                    Uri::parse(format!("agent://SwapAgent/swap#{from}_{to}_out"))?.to_owned();
 
                 // LocalFn export name you can register in your executor registry
                 let export = format!("swap_{}_to_{}", from, to).to_lowercase();
 
                 // 4) Build and insert the method
                 let method = CreateMethod {
-                    agent: agent_handle.id.clone(),       // FK to parent
+                    agent: agent_handle.id.clone(), // FK to parent
                     label,
                     version: "1.0.0".to_string(),
                     visibility: Visibility::Public,
-                    exec_kind: ExecKind::Local,           // demo via LocalFn
+                    exec_kind: ExecKind::Local, // demo via LocalFn
                     description,
                     in_port: CreatePort {
                         label: format!("in.swap-{from}-{to}"),
@@ -90,10 +100,11 @@ impl Swap {
                         end_point: out_ep,
                     },
                     program: ProgramRef {
-                        module_uri: Uri::parse(format!("local://SwapAgent/swap_{from}_{to}"))?.to_owned(),
-                        export,                           // e.g., swap_ALPHA_USDT
+                        module_uri: Uri::parse(format!("local://SwapAgent/swap_{from}_{to}"))?
+                            .to_owned(),
+                        export, // e.g., swap_ALPHA_USDT
                         abi: ProgramAbi::LocalFn,
-                        checksum: "demo".to_string(),     // replace with real blake3/sha256 if you like
+                        checksum: "demo".to_string(), // replace with real blake3/sha256 if you like
                     },
                     embedding: embedding.clone(),
                 };

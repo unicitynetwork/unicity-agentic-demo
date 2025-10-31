@@ -1,16 +1,22 @@
-use std::sync::Arc;
-use fluent_uri::Uri;
-use serde_json::Value;
 use crate::embedding::Embedding;
 use crate::hnsw::HnswMemoryIndex;
-use crate::models::{Channel, CreateAgent, CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility};
 use crate::ledger::Ledger;
+use crate::models::{
+    Channel, CreateAgent, CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility,
+};
 use crate::queries::Queries;
+use fluent_uri::Uri;
+use serde_json::Value;
+use std::sync::Arc;
 
 pub struct Ping;
 
 impl Ping {
-    pub async fn create_agent(queries: &Queries, embedding: Arc<Embedding>, hnsw: &mut HnswMemoryIndex<'_>) -> Result<(), anyhow::Error> {
+    pub async fn create_agent(
+        queries: &Queries,
+        embedding: Arc<Embedding>,
+        hnsw: &mut HnswMemoryIndex<'_>,
+    ) -> Result<(), anyhow::Error> {
         let create_agent = CreateAgent {
             label: "Ping Agent".to_string(),
             version: "1.0.0".to_string(),
@@ -18,7 +24,9 @@ impl Ping {
             description: "An agent that responds to ping with pong.".to_string(),
         };
 
-        let description = "A ping pong agent to test if a system is working by pinging and getting back a pong.".to_string();
+        let description =
+            "A ping pong agent to test if a system is working by pinging and getting back a pong."
+                .to_string();
         let agent_handle = queries.create_agent(create_agent).await?;
         let embedding = embedding.embed(&description).await?;
         let string_type: Uri<String> = "type://string".parse()?;
@@ -52,7 +60,7 @@ impl Ping {
             },
             embedding: embedding.clone(),
         };
-        
+
         let method_handle = queries.create_method(method).await?;
         hnsw.add(method_handle.id, &embedding)?;
 

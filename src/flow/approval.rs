@@ -4,11 +4,11 @@
 //! returns multiple candidates with similar similarity scores, particularly
 //! for directional operations like swaps (USDT→NEAR vs NEAR→USDT).
 
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn, error};
+use crate::decimal::DECIMAL_PLACES;
 use crate::llm::LlmClient;
 use crate::models::Method;
-use crate::decimal::{DECIMAL_PLACES};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, warn};
 
 /// A candidate method with similarity score and reasoning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,10 +43,10 @@ pub struct MethodApprovalResponse {
 pub enum ApprovalError {
     #[error("LLM approval request failed: {0}")]
     LlmRequestFailed(#[from] anyhow::Error),
-    
+
     #[error("Failed to parse LLM response: {0}")]
     ResponseParseFailed(#[from] serde_json::Error),
-    
+
     #[error("No fallback methods available")]
     NoFallbackAvailable,
 }
@@ -63,40 +63,54 @@ impl MethodApprover {
     }
 
     /// Request LLM approval for method selection with fallback mechanisms
-    pub async fn request_approval_with_fallback(&self, request: &MethodApprovalRequest) -> Result<MethodApprovalResponse, ApprovalError> {
+    pub async fn request_approval_with_fallback(
+        &self,
+        request: &MethodApprovalRequest,
+    ) -> Result<MethodApprovalResponse, ApprovalError> {
         match self.request_approval(request).await {
             Ok(approval) => Ok(approval),
             Err(e) => {
                 warn!("⚠️  LLM approval failed, attempting fallback: {}", e);
-                
+
                 // Fallback strategy 1: Use expected pattern if available
                 if let Some(expected_pattern) = &request.expected_pattern {
-                    if let Some(candidate) = request.candidates.iter()
-                        .find(|c| c.method.program.export == *expected_pattern) {
+                    if let Some(candidate) = request
+                        .candidates
+                        .iter()
+                        .find(|c| c.method.program.export == *expected_pattern)
+                    {
                         info!("✅ Using expected pattern fallback: {}", expected_pattern);
                         return Ok(MethodApprovalResponse {
                             selected_method_id: candidate.method.id.to_string(),
                             selected_method_export: expected_pattern.clone(),
-                            reasoning: format!("Fallback to expected pattern due to LLM failure: {}", e),
+                            reasoning: format!(
+                                "Fallback to expected pattern due to LLM failure: {}",
+                                e
+                            ),
                             confidence: 0.6,
                             alternative_suggestions: vec![],
                         });
                     }
                 }
-                
+
                 // Fallback strategy 2: Use highest similarity
                 if let Some(best_candidate) = request.candidates.first() {
-                    warn!("⚠️  Using highest similarity fallback: {} (confidence: 0.5)", 
-                        best_candidate.method.program.export);
+                    warn!(
+                        "⚠️  Using highest similarity fallback: {} (confidence: 0.5)",
+                        best_candidate.method.program.export
+                    );
                     return Ok(MethodApprovalResponse {
                         selected_method_id: best_candidate.method.id.to_string(),
                         selected_method_export: best_candidate.method.program.export.clone(),
-                        reasoning: format!("Fallback to highest similarity due to LLM failure: {}", e),
+                        reasoning: format!(
+                            "Fallback to highest similarity due to LLM failure: {}",
+                            e
+                        ),
                         confidence: 0.5,
                         alternative_suggestions: vec![],
                     });
                 }
-                
+
                 // Fallback strategy 3: No candidates available
                 Err(ApprovalError::NoFallbackAvailable)
             }
@@ -104,7 +118,10 @@ impl MethodApprover {
     }
 
     /// Request LLM approval for method selection
-    pub async fn request_approval(&self, request: &MethodApprovalRequest) -> Result<MethodApprovalResponse, anyhow::Error> {
+    pub async fn request_approval(
+        &self,
+        request: &MethodApprovalRequest,
+    ) -> Result<MethodApprovalResponse, anyhow::Error> {
         info!("🤖 Requesting LLM approval for method selection");
         debug!("📋 Step intent: {}", request.step_intent);
         debug!("🔍 Candidates: {}", request.candidates.len());
@@ -117,9 +134,11 @@ impl MethodApprover {
                 debug!("✅ Received LLM approval response");
                 let approval: MethodApprovalResponse = serde_json::from_str(&response.response)
                     .map_err(|e| anyhow::anyhow!("Failed to parse approval response: {}", e))?;
-                
-                info!("✅ LLM selected method: {} (confidence: {:.2})", 
-                    approval.selected_method_export, approval.confidence);
+
+                info!(
+                    "✅ LLM selected method: {} (confidence: {:.2})",
+                    approval.selected_method_export, approval.confidence
+                );
                 Ok(approval)
             }
             false => {
@@ -131,7 +150,8 @@ impl MethodApprover {
 
     /// Create the LLM prompt for method approval
     fn create_approval_prompt(&self, request: &MethodApprovalRequest) -> String {
-        format!(r#"
+        format!(
+            r#"
 You are a method selection specialist for a financial transaction system.
 
 IMPORTANT: All amounts in this system use {} decimal places internally. When you see amounts in the user query, they represent precise decimal values.
@@ -173,7 +193,10 @@ Respond with JSON only (no code blocks):
             request.step_intent,
             request.expected_pattern.as_deref().unwrap_or("none"),
             self.format_candidates(&request.candidates),
-            request.flow_context.as_deref().unwrap_or("No additional context"),
+            request
+                .flow_context
+                .as_deref()
+                .unwrap_or("No additional context"),
             DECIMAL_PLACES
         )
     }
@@ -202,7 +225,7 @@ Respond with JSON only (no code blocks):
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CreateMethod, CreatePort, ProgramRef, ProgramAbi, ExecKind, Visibility};
+    use crate::models::{CreateMethod, CreatePort, ExecKind, ProgramAbi, ProgramRef, Visibility};
     use fluent_uri::Uri;
 
     fn create_mock_swap_method(from: &str, to: &str) -> Method {
@@ -213,23 +236,32 @@ mod tests {
             version: "1.0.0".to_string(),
             visibility: Visibility::Public,
             exec_kind: ExecKind::Local,
-            description: format!("Swap assets from {} to {}. Expects {{\"amount\"}}.", from, to),
+            description: format!(
+                "Swap assets from {} to {}. Expects {{\"amount\"}}.",
+                from, to
+            ),
             in_port: CreatePort {
                 label: format!("in.swap-{}-{}", from, to),
                 description: format!("Accepts ConversionRequest from {} to {}.", from, to),
                 channel: crate::models::Channel::Call,
                 type_uri: Some("type://u128".parse().unwrap()),
-                end_point: format!("agent://SwapAgent/swap#{}_{}_in", from, to).parse().unwrap(),
+                end_point: format!("agent://SwapAgent/swap#{}_{}_in", from, to)
+                    .parse()
+                    .unwrap(),
             },
             out_port: CreatePort {
                 label: format!("out.swap-{}-{}", from, to),
                 description: format!("Emits AssetAmount of {}.", to),
                 channel: crate::models::Channel::Call,
                 type_uri: Some("type://u128".parse().unwrap()),
-                end_point: format!("agent://SwapAgent/swap#{}_{}_out", from, to).parse().unwrap(),
+                end_point: format!("agent://SwapAgent/swap#{}_{}_out", from, to)
+                    .parse()
+                    .unwrap(),
             },
             program: ProgramRef {
-                module_uri: format!("local://SwapAgent/swap_{}_{}", from, to).parse().unwrap(),
+                module_uri: format!("local://SwapAgent/swap_{}_{}", from, to)
+                    .parse()
+                    .unwrap(),
                 export: format!("swap_{}_to_{}", from, to),
                 abi: ProgramAbi::LocalFn,
                 checksum: "demo".to_string(),
@@ -258,7 +290,7 @@ mod tests {
         ];
 
         let formatted = approver.format_candidates(&candidates);
-        
+
         assert!(formatted.contains("swap_usdt_to_near"));
         assert!(formatted.contains("swap_near_to_usdt"));
         assert!(formatted.contains("0.87"));
@@ -274,19 +306,17 @@ mod tests {
         let request = MethodApprovalRequest {
             original_query: "swap 100 USDT to NEAR".to_string(),
             step_intent: "swap USDT to NEAR".to_string(),
-            candidates: vec![
-                MethodCandidate {
-                    method: create_mock_swap_method("usdt", "near"),
-                    similarity_score: 0.87,
-                    reasoning: "USDT to NEAR conversion".to_string(),
-                },
-            ],
+            candidates: vec![MethodCandidate {
+                method: create_mock_swap_method("usdt", "near"),
+                similarity_score: 0.87,
+                reasoning: "USDT to NEAR conversion".to_string(),
+            }],
             flow_context: None,
             expected_pattern: Some("swap_usdt_to_near".to_string()),
         };
 
         let prompt = approver.create_approval_prompt(&request);
-        
+
         assert!(prompt.contains("swap 100 USDT to NEAR"));
         assert!(prompt.contains("swap USDT to NEAR"));
         assert!(prompt.contains("swap_usdt_to_near"));
