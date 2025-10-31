@@ -8,6 +8,7 @@ use std::env;
 pub struct SpeechRecognizer {
     app_handle: AppHandle,
     is_active: Arc<Mutex<bool>>,
+    model: Arc<Mutex<Option<Whisper>>>,
 }
 
 impl SpeechRecognizer {
@@ -35,6 +36,7 @@ impl SpeechRecognizer {
         Self {
             app_handle,
             is_active: Arc::new(Mutex::new(false)),
+            model: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -76,6 +78,39 @@ impl SpeechRecognizer {
         info!("🎤 Initializing speech recognition engine");
         let _ = self.app_handle.emit("stt://log", "🎤 Initializing speech recognition engine");
 
+        let needs_loading = {
+            let guard = self.model.lock().unwrap();
+            guard.is_none()
+        };
+
+        // Load model if not already loaded
+        if needs_loading {
+            let model = WhisperBuilder::default()
+                .with_source(WhisperSource::SmallEn)
+                .build_with_loading_handler(|progress| match progress {
+                    ModelLoadingProgress::Downloading { source, progress } => {
+                        let progress = (progress.progress) as u32;
+                        println!("Downloading {source} {progress}");
+                    }
+                    ModelLoadingProgress::Loading { progress } => {
+                        let progress_percent = (progress * 100.0) as u32;
+                        println!("Loading model {progress_percent}%");
+                    }
+                })
+                .await;
+
+            match model {
+                Ok(m) => {
+                    *self.model.lock().unwrap() = Some(m);
+                    let _ = self.app_handle.emit("stt://log", "✅ Model loaded");
+                }
+                Err(e) => {
+                    let _ = self.app_handle.emit("stt://log", format!("❌ Model error: {}", e));
+                    return;
+                }
+            }
+        }
+
         *self.is_active.lock().unwrap() = true;
 
         // Start processing loop
@@ -88,36 +123,17 @@ impl SpeechRecognizer {
     fn start_processing_loop(&self) {
         let app_handle = self.app_handle.clone();
         let is_active = self.is_active.clone();
+        let model = self.model.clone();
 
         tokio::spawn(async move {
-            // Build model once
-            let model = match WhisperBuilder::default()
-                .with_source(WhisperSource::SmallEn)
-                .build_with_loading_handler(|progress| match progress {
-                    ModelLoadingProgress::Downloading { source, progress } => {
-                        let progress = (progress.progress) as u32;
-                        println!("Downloading {source} {progress}");
-                    }
-                    ModelLoadingProgress::Loading { progress } => {
-                        let progress_percent = (progress * 100.0) as u32;
-                        println!("Loading model {progress_percent}%");
-                    }
-                })
-                .await
-            {
-                Ok(m) => {
-                    let _ = app_handle.emit("stt://log", "✅ Model loaded");
-                    m
-                }
-                Err(e) => {
-                    let _ = app_handle.emit("stt://log", format!("❌ Model error: {}", e));
-                    return;
-                }
-            };
-
             // Get stream once
             let mic = MicInput::default();
             let stream = mic.stream();
+            // Get the model (it's already loaded)
+            let model = {
+                let guard = model.lock().unwrap();
+                guard.as_ref().cloned() // Need to clone the model
+            }.expect("Model should be loaded");
 
             // Transcribe once
             let mut transcriptions = stream.transcribe(model);

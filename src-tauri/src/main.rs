@@ -14,7 +14,7 @@ use tracing::{info, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::App;
 use app_state::AppState;
-use error::{WhisperError, WhisperResult};
+use error::WhisperResult;
 use constants::INITIAL_USDT_BALANCE;
 use crate::stt::SpeechRecognizer;
 

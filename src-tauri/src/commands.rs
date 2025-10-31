@@ -55,12 +55,12 @@ pub async fn initialize_agents(state: &AppState) -> WhisperResult<()> {
     info!("✅ Ping Agent registered");
 
     // Register Swap Agent
-    // unicity_agentic_demo::agents::swap::Swap::create_agent(
-    //     &state.queries,
-    //     state.embedding.clone(),
-    //     &mut agent_index,
-    // ).await?;
-    // info!("✅ Swap Agent registered");
+    unicity_agentic_demo::agents::swap::Swap::create_agent(
+        &state.queries,
+        state.embedding.clone(),
+        &mut agent_index,
+    ).await?;
+    info!("✅ Swap Agent registered");
 
     Ok(())
 }
