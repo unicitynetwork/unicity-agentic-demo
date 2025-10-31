@@ -1,9 +1,8 @@
 use crate::app_state::AppState;
 use crate::constants::DEFAULT_TRANSACTION_HISTORY_LIMIT;
-use crate::error::{WhisperError, WhisperResult};
 use crate::stt::SpeechRecognizer;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 use tracing::{debug, error, info};
 use unicity_agentic_demo::{
     format_amount_for_display, parse_transaction_flow, FlowComposer, FlowExecutor,
@@ -43,10 +42,13 @@ pub struct AgentInfo {
 }
 
 /// Initialize all agents in the system
-pub async fn initialize_agents(state: &AppState) -> WhisperResult<()> {
+pub async fn initialize_agents(state: &AppState) -> anyhow::Result<()> {
     info!("🤖 Registering agents in knowledge graph");
 
-    let mut agent_index = state.agent_index.lock().unwrap();
+    let mut agent_index = state
+        .agent_index
+        .lock()
+        .map_err(|_| anyhow::Error::msg("Couldn't get lock on Memory Index"))?;
 
     // Register Ping Agent
     unicity_agentic_demo::agents::ping::Ping::create_agent(
@@ -129,11 +131,11 @@ pub async fn process_query(
     let mut search_results = Vec::new();
     {
         let agent_index = state.agent_index.lock().unwrap();
-        for (embedding, step) in step_embeddings.iter().zip(transaction_flow.pipeline.iter()) {
+        for (embedding, _step) in step_embeddings.iter().zip(transaction_flow.pipeline.iter()) {
             let results = agent_index.search(embedding, 10);
             search_results.push(results);
         }
-    } // Lock is released here
+    }
 
     // Now create the composer and compose the flow using the pre-computed search results
     let composed_flow = _composer
@@ -314,7 +316,7 @@ async fn generate_execution_summary(
     original_query: &str,
     execution_result: &unicity_agentic_demo::ExecutionResult,
     llm_client: &unicity_agentic_demo::LlmClient,
-) -> WhisperResult<String> {
+) -> anyhow::Result<String> {
     info!("🤖 Generating execution summary");
 
     let execution_json = serde_json::to_string_pretty(execution_result)

@@ -1,5 +1,4 @@
 use crate::constants::INITIAL_USDT_BALANCE;
-use crate::error::{WhisperError, WhisperResult};
 use std::sync::{Arc, Mutex};
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
@@ -15,7 +14,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(app: App, db: Arc<Surreal<Db>>, api_key: String) -> WhisperResult<Self> {
+    pub async fn new(app: App, db: Arc<Surreal<Db>>, api_key: String) -> Self {
         let queries = Arc::new(Queries::new(db));
         let embedding = app.embedding.clone();
         let llm = Arc::new(LlmClient::new(api_key));
@@ -24,13 +23,13 @@ impl AppState {
             1024,
         )));
 
-        Ok(Self {
+        Self {
             app: Arc::new(Mutex::new(app)),
             queries,
             embedding,
             llm,
             agent_index,
-        })
+        }
     }
 }
 

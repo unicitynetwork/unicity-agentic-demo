@@ -203,67 +203,6 @@ pub fn setup_whisper_cache() -> Result<PathBuf, std::io::Error> {
     Ok(cache_dir)
 }
 
-/// Returns the current Whisper cache directory without setting it up.
-/// Returns None if the cache hasn't been configured yet.
-pub fn get_whisper_cache_dir() -> Option<PathBuf> {
-    env::var_os("HF_HOME").map(PathBuf::from)
-}
-
-/// Clears the Whisper model cache (deletes all cached models).
-/// Use with caution - models will need to be re-downloaded.
-pub fn clear_whisper_cache() -> Result<(), std::io::Error> {
-    if let Some(cache_dir) = get_whisper_cache_dir() {
-        if cache_dir.exists() {
-            std::fs::remove_dir_all(&cache_dir)?;
-            info!("🗑️ Cleared Whisper cache at: {}", cache_dir.display());
-        }
-    }
-    Ok(())
-}
-
-/// Gets the size of the Whisper cache directory in bytes.
-pub fn get_cache_size() -> Result<u64, std::io::Error> {
-    fn dir_size(path: &PathBuf) -> Result<u64, std::io::Error> {
-        let mut size = 0u64;
-        if path.is_dir() {
-            for entry in std::fs::read_dir(path)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_dir() {
-                    size += dir_size(&path)?;
-                } else {
-                    size += entry.metadata()?.len();
-                }
-            }
-        }
-        Ok(size)
-    }
-
-    if let Some(cache_dir) = get_whisper_cache_dir() {
-        if cache_dir.exists() {
-            return dir_size(&cache_dir);
-        }
-    }
-    Ok(0)
-}
-
-/// Formats bytes into a human-readable string (e.g., "1.5 GB")
-pub fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} bytes", bytes)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,14 +212,5 @@ mod tests {
         let cache_dir = setup_whisper_cache().unwrap();
         assert!(cache_dir.exists());
         assert!(cache_dir.is_dir());
-    }
-
-    #[test]
-    fn test_format_bytes() {
-        assert_eq!(format_bytes(500), "500 bytes");
-        assert_eq!(format_bytes(1024), "1.00 KB");
-        assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
-        assert_eq!(format_bytes(1536 * 1024 * 1024), "1.50 GB");
     }
 }

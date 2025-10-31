@@ -4,13 +4,15 @@
 mod app_state;
 mod commands;
 mod constants;
-mod error;
 mod stt;
 
+use crate::commands::{
+    get_agents, get_all_balances, get_balance, get_transaction_history, process_query, stt_start,
+    stt_stop,
+};
 use crate::stt::SpeechRecognizer;
 use app_state::AppState;
 use constants::INITIAL_USDT_BALANCE;
-use error::WhisperResult;
 use std::sync::Arc;
 use surrealdb::Surreal;
 use tauri::Manager;
@@ -19,7 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use unicity_agentic_demo::App;
 
 #[tokio::main]
-async fn main() -> WhisperResult<()> {
+async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     init_tracing();
 
@@ -45,7 +47,7 @@ async fn main() -> WhisperResult<()> {
     info!("✅ App initialized with {} USDT", INITIAL_USDT_BALANCE);
 
     // Create shared app state
-    let app_state = AppState::new(app, db, api_key).await?;
+    let app_state = AppState::new(app, db, api_key).await;
 
     // Initialize agents
     if let Err(e) = commands::initialize_agents(&app_state).await {
@@ -66,19 +68,15 @@ async fn main() -> WhisperResult<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::process_query,
-            commands::get_balance,
-            commands::get_all_balances,
-            commands::get_agents,
-            commands::get_transaction_history,
-            commands::stt_start,
-            commands::stt_stop
+            process_query,
+            get_balance,
+            get_all_balances,
+            get_agents,
+            get_transaction_history,
+            stt_start,
+            stt_stop
         ])
         .run(tauri::generate_context!())?;
-
-    // Cleanup STT resources on shutdown
-    // #[cfg(target_os = "macos")]
-    // stt::cleanup();
 
     Ok(())
 }
