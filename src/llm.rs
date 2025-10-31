@@ -64,11 +64,21 @@ pub struct LlmResult {
 }
 
 impl LlmClient {
-    /// Create a new LLM client
+    /// Create a new LLM client with configuration from environment variables
     pub fn new(api_key: String) -> Self {
+        let base_url = std::env::var("LLM_BASE_URL")
+            .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4/chat/completions".to_string());
+        let model = std::env::var("LLM_MODEL")
+            .unwrap_or_else(|_| "GLM-4.6".to_string());
+        
+        Self::with_config(api_key, base_url, model)
+    }
+
+    /// Create with custom base URL and model
+    pub fn with_config(api_key: String, base_url: String, model: String) -> Self {
         info!("🤖 Creating new LLM client");
-        debug!("🔧 API endpoint: https://api.z.ai/api/coding/paas/v4/chat/completions");
-        debug!("🧠 Model: GLM-4.6");
+        debug!("🔧 API endpoint: {}", base_url);
+        debug!("🧠 Model: {}", model);
 
         let client = reqwest::Client::new();
         trace!("🌐 HTTP client initialized");
@@ -76,20 +86,10 @@ impl LlmClient {
         info!("✅ LLM client created successfully");
 
         Self {
-            base_url: "https://api.z.ai/api/coding/paas/v4/chat/completions".to_string(),
-            model: "GLM-4.6".to_string(),
-            api_key,
-            client,
-        }
-    }
-
-    /// Create with custom base URL and model
-    pub fn with_config(api_key: String, base_url: String, model: String) -> Self {
-        Self {
             base_url,
             model,
             api_key,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 

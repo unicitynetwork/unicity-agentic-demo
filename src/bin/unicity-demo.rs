@@ -35,6 +35,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    // Load environment variables from .env file
+    dotenv::dotenv().ok();
+    
     let args = Args::parse();
 
     // Initialize tracing with emoji prefixes

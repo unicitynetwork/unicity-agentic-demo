@@ -22,6 +22,9 @@ use unicity_agentic_demo::App;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load environment variables from .env file
+    dotenv::dotenv().ok();
+    
     // Initialize tracing
     init_tracing();
 
