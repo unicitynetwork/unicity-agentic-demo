@@ -17,11 +17,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
 surrealdb = { version = "2.3.10", features = ["kv-mem"] }
-candle-core = "0.9.1"
-candle-nn = "0.9.1"
-candle-transformers = "0.9.1"
 dirs = "6.0.0"
-kalosm = { version = "0.4", features = ["sound"] }
 dotenv = "0.15.0"
 
 [build-dependencies]
@@ -35,9 +31,22 @@ accelerate = ["candle-core/accelerate"]
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda", "kalosm/cuda"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal", "kalosm/metal"]
 
-# Platform-specific defaults
-[target.'cfg(target_os = "macos")'.features]
-default = ["metal"]
+# Platform-specific dependencies with appropriate GPU features
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "0.9.1", default-features = false, features = ["metal"] }
+candle-nn = { version = "0.9.1", default-features = false, features = ["metal"] }
+candle-transformers = { version = "0.9.1", default-features = false, features = ["metal"] }
+kalosm = { version = "0.4", default-features = false, features = ["sound", "metal"] }
 
-[target.'cfg(target_os = "windows")'.features]
-default = ["cuda"]
+[target.'cfg(target_os = "windows")'.dependencies]
+candle-core = { version = "0.9.1", default-features = false, features = ["cuda"] }
+candle-nn = { version = "0.9.1", default-features = false, features = ["cuda"] }
+candle-transformers = { version = "0.9.1", default-features = false, features = ["cuda"] }
+kalosm = { version = "0.4", default-features = false, features = ["sound", "cuda"] }
+
+# Fallback for other platforms (Linux, etc.)
+[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+kalosm = { version = "0.4", features = ["sound"] }
