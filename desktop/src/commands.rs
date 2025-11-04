@@ -9,10 +9,19 @@ use unicity_agentic_demo::{
 };
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct UIComponentSuggestion {
+    pub component_type: String,
+    pub title: String,
+    pub description: String,
+    pub priority: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QueryResult {
     pub success: bool,
     pub response: String,
     pub steps: Vec<ExecutionStep>,
+    pub ui_suggestions: Vec<UIComponentSuggestion>,
     pub error: Option<String>,
 }
 
@@ -181,10 +190,21 @@ pub async fn process_query(
                 })
                 .collect();
 
+            let ui_suggestions = transaction_flow.ui_suggestions
+                .into_iter()
+                .map(|suggestion| UIComponentSuggestion {
+                    component_type: format!("{:?}", suggestion.component_type).to_lowercase(),
+                    title: suggestion.title,
+                    description: suggestion.description,
+                    priority: suggestion.priority,
+                })
+                .collect();
+
             Ok(QueryResult {
                 success: true,
                 response: summary,
                 steps,
+                ui_suggestions,
                 error: None,
             })
         }
@@ -194,6 +214,7 @@ pub async fn process_query(
                 success: false,
                 response: "Execution failed".to_string(),
                 steps: vec![],
+                ui_suggestions: vec![],
                 error: execution_result.error,
             })
         }
