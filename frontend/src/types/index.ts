@@ -1,3 +1,19 @@
+import { type LucideIcon } from "lucide-react";
+
+export interface IAgent {
+  id: string;
+  name: string;
+  Icon: LucideIcon;
+}
+
+export interface IAsset {
+  id: string;
+  name: string;
+  ticker: string;
+  iconUrl: string;
+  amount: number;
+}
+
 export interface QueryResult {
   success: boolean;
   response: string;

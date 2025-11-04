@@ -1,49 +1,57 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import './styles.css';
-import { BalanceInfo, AgentInfo, ChatMessage, AppState } from './types';
-import BalanceDisplay from './components/BalanceDisplay';
-import AgentStatus from './components/AgentStatus';
-import ChatInterface from './components/ChatInterface';
+import { Layout } from './components/layout/Layout';
+import { ConsoleWindow } from './components/console/ConsoleWindow';
+import { ActiveAgentsBar } from './components/console/ActiveAgentsBar';
+import { publicAgents, privateAgents } from './mocks/agents';
+import { AgentSection } from './components/agents/AgentSection';
+
+import { AppState, ChatMessage, BalanceInfo, AgentInfo } from './types';
+import SideBar from './components/sidebar/SideBar';
 
 function App() {
   const [appState, setAppState] = useState<AppState>({
     balances: [],
     agents: [],
-    messages: [],
+    messages: [
+      {
+        id: '1',
+        type: 'assistant',
+        content: 'Welcome to Unicity AgentSphere. Connecting to backend...',
+        timestamp: new Date(),
+      }
+    ],
     isLoading: false,
     error: undefined,
   });
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
   useEffect(() => {
-    scrollToBottom();
-  }, [appState.messages]);
-
-  useEffect(() => {
-    // Initialize app data
     const initializeApp = async () => {
       try {
+        setAppState(prev => ({ ...prev, isLoading: true }));
+
         const [balances, agents] = await Promise.all([
           invoke<BalanceInfo[]>('get_all_balances'),
           invoke<AgentInfo[]>('get_agents'),
         ]);
 
-        setAppState((prev: AppState) => ({
+        setAppState(prev => ({
           ...prev,
           balances,
           agents,
+          isLoading: false,
+          messages: [
+            ...prev.messages, 
+            { id: '2', type: 'assistant', content: 'Connection successful. Agents loaded.', timestamp: new Date() }
+          ]
         }));
       } catch (error) {
         console.error('Failed to initialize app:', error);
-        setAppState((prev: AppState) => ({
+        const errorMsg = error instanceof Error ? error.message : 'Failed to initialize app';
+        setAppState(prev => ({
           ...prev,
-          error: error instanceof Error ? error.message : 'Failed to initialize app',
+          isLoading: false,
+          error: errorMsg,
         }));
       }
     };
@@ -60,17 +68,11 @@ function App() {
       content: message,
       timestamp: new Date(),
     };
-
-    setAppState((prev: AppState) => ({
-      ...prev,
-      messages: [...prev.messages, userMessage],
-      isLoading: true,
-      error: undefined,
-    }));
+    setAppState(prev => ({ ...prev, messages: [...prev.messages, userMessage], isLoading: true, error: undefined }));
 
     try {
       const response = await invoke<any>('process_query', { query: message });
-      
+
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
@@ -80,59 +82,61 @@ function App() {
         error: response.error,
       };
 
-      // Refresh balances after processing
       const balances = await invoke<BalanceInfo[]>('get_all_balances');
 
-      setAppState((prev: AppState) => ({
+      setAppState(prev => ({
         ...prev,
         messages: [...prev.messages, assistantMessage],
         balances,
         isLoading: false,
       }));
+
     } catch (error) {
-      console.error('Failed to process query:', error);
-      
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: 'Sorry, something went wrong while processing your request.',
+        content: 'Sorry, something went wrong processing your request.',
         timestamp: new Date(),
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMsg,
       };
-
-      setAppState((prev: AppState) => ({
+      setAppState(prev => ({
         ...prev,
         messages: [...prev.messages, errorMessage],
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to process query',
+        error: errorMsg,
       }));
     }
   };
-
   return (
-    <div className="app">
-      <div className="sidebar">
-        <BalanceDisplay balances={appState.balances} />
-        <AgentStatus agents={appState.agents} />
-      </div>
-      
-      <div className="main-content">
-        <div className="header">
-          <h1>Unicity Agentic Demo</h1>
-          <p>Neurosymbolic Flow Based Programming System</p>
-        </div>
+    <Layout
+      sidebar={<SideBar balances={appState.balances}/>}
+    >
+      <div className="flex flex-col gap-5 min-h-0 h-full">
+        <AgentSection 
+          title="Public Agents"
+          subTitle='Ready-to-use agents from the community' 
+          agents={publicAgents}
+          showAddButton={true} 
+        />
+        <AgentSection 
+          title="Private Agents" 
+          subTitle='Ready-to-use private agents'
+          agents={privateAgents} 
+          showAddButton={true} 
+        />
         
-        <div className="chat-container">
-          <ChatInterface
+        <div className="flex-1 min-h-0 space-y-2">
+          <ConsoleWindow 
             messages={appState.messages}
             isLoading={appState.isLoading}
-            onSendMessage={handleSendMessage}
             error={appState.error}
+            onSendMessage={handleSendMessage}
           />
-          <div ref={messagesEndRef} />
+          <ActiveAgentsBar />
         </div>
       </div>
-    </div>
+    </Layout>
   );
 }
 
