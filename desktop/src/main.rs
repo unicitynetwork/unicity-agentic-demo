@@ -62,9 +62,7 @@ async fn main() -> anyhow::Result<()> {
     tauri::Builder::default()
         .manage(app_state)
         .setup(|app| {
-            #[cfg(target_os = "macos")]
             {
-                // Initialize STT resources on macOS
                 let sr = SpeechRecognizer::new(app.handle().clone());
                 app.manage(sr);
             }
