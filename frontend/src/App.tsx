@@ -1,13 +1,17 @@
 import { useState, useEffect } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
+
 import { Layout } from './components/layout/Layout';
+import { BlankState } from './components/blank/BlankState';
 import { ConsoleWindow } from './components/console/ConsoleWindow';
 import { ActiveAgentsBar } from './components/console/ActiveAgentsBar';
-import { publicAgents, privateAgents } from './mocks/agents';
 import { AgentSection } from './components/agents/AgentSection';
+import SideBar from './components/sidebar/SideBar';
 
 import { AppState, ChatMessage, BalanceInfo, AgentInfo } from './types';
-import SideBar from './components/sidebar/SideBar';
+import { publicAgents, privateAgents } from './mocks/agents';
+import { Button } from './components/common/Button';
 
 function App() {
   const [appState, setAppState] = useState<AppState>({
@@ -25,11 +29,22 @@ function App() {
     error: undefined,
   });
 
+  const [showSplash, setShowSplash] = useState(true);
+  const [showConsole, setShowConsole] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [showAgents, setShowAgents] = useState(false);
+
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        setAppState(prev => ({ ...prev, isLoading: true }));
 
+
+        // if (!window.__TAURI__) {
+        //   console.warn("Mock Mode: Загружаем фейковые балансы");
+        //   setAppState(prev => ({ ...prev, balances: [{asset_id: 'USDT', balance: '1000.00', raw_balance: 0}] }));
+        //   return;
+        // }
+        setAppState(prev => ({ ...prev, isLoading: true }));
         const [balances, agents] = await Promise.all([
           invoke<BalanceInfo[]>('get_all_balances'),
           invoke<AgentInfo[]>('get_agents'),
@@ -41,7 +56,7 @@ function App() {
           agents,
           isLoading: false,
           messages: [
-            ...prev.messages, 
+            ...prev.messages,
             { id: '2', type: 'assistant', content: 'Connection successful. Agents loaded.', timestamp: new Date() }
           ]
         }));
@@ -59,8 +74,23 @@ function App() {
     initializeApp();
   }, []);
 
+  const handleUiCommand = (command: string) => {
+    if (command.includes('console')) {
+      setShowSplash(false);
+      setShowConsole(true);
+    }
+    if (command.includes('balances')) {
+      setShowSidebar(true);
+    }
+    if (command.includes('agents')) {
+      setShowAgents(true);
+    }
+  };
+
   const handleSendMessage = async (message: string) => {
     if (!message.trim() || appState.isLoading) return;
+
+    handleUiCommand(message.toLowerCase());
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
@@ -108,35 +138,118 @@ function App() {
       }));
     }
   };
+  const SimButtons = () => (
+    <div className="fixed bottom-4 left-4 z-50 flex gap-2 p-2 bg-gray-800 rounded-lg opacity-80 hover:opacity-100">
+      <Button onClick={() => {
+        setShowSplash(false); // Выходим со сплэша
+        setShowConsole(prev => !prev); // Переключаем консоль
+      }}>
+        Toggle Console
+      </Button>
+      <Button onClick={() => setShowSidebar(prev => !prev)}>
+        Toggle Balances
+      </Button>
+      <Button onClick={() => setShowAgents(prev => !prev)}>
+        Toggle Agents
+      </Button>
+      <Button variant="secondary" onClick={() => {
+        setShowSplash(true); setShowConsole(false); setShowSidebar(false); setShowAgents(false);
+      }}>
+        Reset (Splash)
+      </Button>
+    </div>
+  );
+
+
   return (
-    <Layout
-      sidebar={<SideBar balances={appState.balances}/>}
-    >
-      <div className="flex flex-col gap-5 min-h-0 h-full">
-        <AgentSection 
-          title="Public Agents"
-          subTitle='Ready-to-use agents from the community' 
-          agents={publicAgents}
-          showAddButton={true} 
-        />
-        <AgentSection 
-          title="Private Agents" 
-          subTitle='Ready-to-use private agents'
-          agents={privateAgents} 
-          showAddButton={true} 
-        />
-        
-        <div className="flex-1 min-h-0 space-y-2">
-          <ConsoleWindow 
-            messages={appState.messages}
-            isLoading={appState.isLoading}
-            error={appState.error}
-            onSendMessage={handleSendMessage}
-          />
-          <ActiveAgentsBar />
-        </div>
-      </div>
-    </Layout>
+    <div className='bg-linear-to-b from-[#101010] to-[#0B0B0B]'>
+      <SimButtons />
+
+      <AnimatePresence>
+        {showSplash && (
+          <motion.div
+            key="splash"
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.3 }}
+          >
+            <BlankState
+              onStartListening={() => invoke('stt_start')}
+              onStopListening={() => invoke('stt_stop')}
+              onTranscript={(text) => handleSendMessage(text)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {!showSplash && (
+        <Layout
+          showSidebar={showSidebar}
+          sidebar={<AnimatePresence>
+            {showSidebar && (
+              <motion.div
+                key="sidebar"
+                initial={{ opacity: 0, x: 50 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 50 }}
+                transition={{ duration: 0.4, ease: 'easeInOut' }}
+                className="flex flex-col gap-6"
+              >
+                <SideBar balances={appState.balances} />
+              </motion.div>
+            )}
+          </AnimatePresence>}
+        >
+          <AnimatePresence>
+            {showAgents && (
+              <motion.div
+                key="agents"
+                layout
+                initial={{ opacity: 0, y: -30 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -30 }}
+                transition={{ duration: 0.4, ease: 'easeInOut' }}
+                className="flex flex-col gap-5 min-h-0"
+              >
+                <AgentSection title="Public Agents" subTitle="Agents from the community" agents={publicAgents} showAddButton/>
+                <AgentSection title="Private Agents" subTitle="Your private agents" agents={privateAgents} showAddButton />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {showConsole && (
+              <motion.div 
+                key="console" 
+                layout
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, ease: 'easeInOut' }}
+                className="flex flex-col flex-1 h-full min-h-[300px]"
+              >
+                <ConsoleWindow
+                  messages={appState.messages}
+                  isLoading={appState.isLoading}
+                  error={appState.error}
+                  onSendMessage={handleSendMessage}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {showConsole && ( 
+              <motion.div
+                key="active-agents"
+                layout
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <ActiveAgentsBar />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Layout>
+      )}
+    </div>
   );
 }
 
