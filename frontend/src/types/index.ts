@@ -14,10 +14,18 @@ export interface IAsset {
   amount: number;
 }
 
+export interface UIComponentSuggestion {
+  component_type: string;
+  title: string;
+  description: string;
+  priority: number;
+}
+
 export interface QueryResult {
   success: boolean;
   response: string;
   steps: ExecutionStep[];
+  ui_suggestions: UIComponentSuggestion[];
   error?: string;
 }
 

@@ -8,6 +8,27 @@ use crate::llm::LlmClient;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, trace, warn};
 
+/// UI component types that can be suggested by the LLM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UIComponentType {
+    ChatScreen,
+    CryptoBalances,
+    AgentList,
+    TransactionHistory,
+    VoiceInterface,
+    SettingsPanel,
+}
+
+/// UI component suggestion with metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UIComponentSuggestion {
+    pub component_type: UIComponentType,
+    pub title: String,
+    pub description: String,
+    pub priority: u8, // 1-10, higher is more important
+}
+
 /// Transaction flow parsed from natural language query
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionFlow {
@@ -15,6 +36,7 @@ pub struct TransactionFlow {
     pub intent: String,
     pub pipeline: Vec<FlowStep>,
     pub expected_outcome: String,
+    pub ui_suggestions: Vec<UIComponentSuggestion>,
 }
 
 /// Individual step in the transaction pipeline
@@ -76,7 +98,7 @@ pub async fn parse_transaction_flow(
 fn create_transaction_prompt(query: &str) -> String {
     format!(
         r#"
-You are a transaction flow analyzer for a multi-agent financial system. Parse user queries into executable transaction pipelines. Respond with JSON NOT in a code block.
+You are a transaction flow analyzer for a multi-agent financial system with UI component suggestion capabilities. Parse user queries into executable transaction pipelines and suggest relevant UI components. Respond with JSON NOT in a code block.
 
 IMPORTANT: All amounts use {} decimal places internally. When parsing amounts, preserve the exact decimal format provided by the user.
 
@@ -99,7 +121,15 @@ INPUT: "{}"
       "method_pattern": "expected_method_name_pattern"
     }}
   ],
-  "expected_outcome": "description of final result"
+  "expected_outcome": "description of final result",
+  "ui_suggestions": [
+    {{
+      "component_type": "chat_screen|crypto_balances|agent_list|transaction_history|voice_interface|settings_panel",
+      "title": "Human-readable title",
+      "description": "Why this component is relevant",
+      "priority": 1-10
+    }}
+  ]
 }}
 
 === TRANSACTION PARSING RULES ===
@@ -126,6 +156,15 @@ INPUT: "{}"
 - swap_X_to_Y → "swap_{{from}}_{{to}}"
 - ping → "ping"
 - balance → "check_balance"
+
+**UI COMPONENT SUGGESTIONS** - Analyze user intent and suggest relevant UI components:
+- "chat screen", "talk to you", "conversation" → chat_screen
+- "balances", "portfolio", "holdings", "crypto" → crypto_balances
+- "agents", "tools", "capabilities" → agent_list
+- "history", "transactions", "past activity" → transaction_history
+- "voice", "speak", "talk" → voice_interface
+- "settings", "configure", "preferences" → settings_panel
+- Priority: 1-3 (low), 4-7 (medium), 8-10 (high relevance)
 
 **AMOUNT HANDLING**:
 - Explicit amounts: "swap 1000 USDT" → amount: "1000.00000000"
@@ -160,7 +199,21 @@ Input: "I want to swap 500 USDT to NEAR then to BTC"
       "method_pattern": "swap_near_to_btc"
     }}
   ],
-  "expected_outcome": "500.00000000 USDT converted to NEAR then to BTC"
+  "expected_outcome": "500.00000000 USDT converted to NEAR then to BTC",
+  "ui_suggestions": [
+    {{
+      "component_type": "crypto_balances",
+      "title": "Portfolio Overview",
+      "description": "View your current asset balances after the swap",
+      "priority": 8
+    }},
+    {{
+      "component_type": "transaction_history",
+      "title": "Transaction History",
+      "description": "Track your swap operations and results",
+      "priority": 6
+    }}
+  ]
 }}
 
 Input: "swap 0.5 USDT to BTC"
@@ -178,7 +231,15 @@ Input: "swap 0.5 USDT to BTC"
       "method_pattern": "swap_usdt_to_btc"
     }}
   ],
-  "expected_outcome": "0.50000000 USDT converted to BTC"
+  "expected_outcome": "0.50000000 USDT converted to BTC",
+  "ui_suggestions": [
+    {{
+      "component_type": "crypto_balances",
+      "title": "Balance Tracker",
+      "description": "Monitor your USDT and BTC balances",
+      "priority": 9
+    }}
+  ]
 }}
 
 Input: "ping the system"
@@ -196,7 +257,15 @@ Input: "ping the system"
       "method_pattern": "ping"
     }}
   ],
-  "expected_outcome": "system ping response confirming connectivity"
+  "expected_outcome": "system ping response confirming connectivity",
+  "ui_suggestions": [
+    {{
+      "component_type": "chat_screen",
+      "title": "System Console",
+      "description": "Interactive chat for system commands",
+      "priority": 7
+    }}
+  ]
 }}
 
 RULES:
@@ -207,7 +276,69 @@ RULES:
 - Be explicit about asset conversions
 - Use financial terminology for semantic richness
 - PRESERVE DECIMAL PRECISION: Always format amounts with {} decimal places
-- Respond with JSON only, no code blocks"#,
+- Analyze user intent for UI component suggestions
+- Include relevant UI suggestions based on query context
+- Respond with JSON only, no code blocks
+
+ADDITIONAL EXAMPLES:
+
+Input: "I want to have a chat screen to write to you"
+{{
+  "tool": "transaction_flow",
+  "intent": "User wants to access a chat interface for communication",
+  "pipeline": [],
+  "expected_outcome": "chat interface activated",
+  "ui_suggestions": [
+    {{
+      "component_type": "chat_screen",
+      "title": "Chat Interface",
+      "description": "Interactive chat screen for communicating with the AI assistant",
+      "priority": 10
+    }}
+  ]
+}}
+
+Input: "I want to see crypto balances"
+{{
+  "tool": "transaction_flow",
+  "intent": "User wants to view their cryptocurrency portfolio and balances",
+  "pipeline": [
+    {{
+      "step": 1,
+      "action": "check_balance",
+      "from_asset": null,
+      "to_asset": null,
+      "amount": "user_specified",
+      "semantic_hook": "retrieve current cryptocurrency balances from portfolio",
+      "method_pattern": "check_balance"
+    }}
+  ],
+  "expected_outcome": "display of all cryptocurrency balances",
+  "ui_suggestions": [
+    {{
+      "component_type": "crypto_balances",
+      "title": "Crypto Portfolio",
+      "description": "Detailed view of all your cryptocurrency holdings and balances",
+      "priority": 10
+    }}
+  ]
+}}
+
+Input: "show me a list of available agents"
+{{
+  "tool": "transaction_flow",
+  "intent": "User wants to browse and discover available agents in the system",
+  "pipeline": [],
+  "expected_outcome": "display of available agents",
+  "ui_suggestions": [
+    {{
+      "component_type": "agent_list",
+      "title": "Agent Directory",
+      "description": "Browse all available agents and their capabilities",
+      "priority": 10
+    }}
+  ]
+}}"#,
         DECIMAL_PLACES, query, DECIMAL_PLACES
     )
 }
