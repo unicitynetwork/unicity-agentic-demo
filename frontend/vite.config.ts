@@ -15,8 +15,8 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     watch: {
-      // 3. tell vite to ignore watching `desktop`
-      ignored: ["**/desktop/**"],
+      // 3. tell vite to ignore watching `desktop` and `node_modules`
+      ignored: ["**/desktop/**", "**/node_modules/**"],
     },
   },
 }));
