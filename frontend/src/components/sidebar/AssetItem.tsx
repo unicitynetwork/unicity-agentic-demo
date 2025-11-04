@@ -26,7 +26,7 @@ export const AssetItem: React.FC<AssetItemProps> = ({ asset }) => {
       </div>
 
       <p className="text-sm font-medium text-brand-text-light">
-        {asset.raw_balance.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+        {asset.balance}
       </p>
     </div>
   );

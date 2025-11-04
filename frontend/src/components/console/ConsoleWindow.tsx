@@ -1,7 +1,9 @@
-import { ChevronRight, ArrowUp, Loader2 } from 'lucide-react';
+import { ChevronRight, ArrowUp, Loader2, StopCircle, Mic } from 'lucide-react';
 import { Button } from '../common/Button';
 import { useEffect, useRef, useState } from 'react';
 import { ChatMessage } from '../../types';
+import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
 interface ConsoleWindowProps {
   messages: ChatMessage[];
@@ -19,6 +21,105 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
 
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [waitingForPermission, setWaitingForPermission] = useState(false);
+  const sttPartialsRef = useRef<string>('');
+
+  const unlistenPartRef = useRef<UnlistenFn | null>(null);
+  const unlistenMicPermRef = useRef<UnlistenFn | null>(null);
+  const unlistenSpeechAuthRef = useRef<UnlistenFn | null>(null);
+  const startingRef = useRef(false); // Флаг для предотвращения двойного клика
+  const shouldRetryRef = useRef(false);
+
+  useEffect(() => {
+    const setupListeners = async () => {
+      try {
+        // Частичный результат речи
+        unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
+          const txt = (e.payload || '').trim();
+          console.log('📝 STT Partial:', txt);
+          const current = sttPartialsRef.current;
+          let newText = current;
+          if (!current.includes(txt)) {
+            newText = current ? `${current} ${txt}` : txt;
+          }
+          sttPartialsRef.current = newText;
+          setInputValue(newText);
+          if (!isListening) setIsListening(true);
+        });
+
+
+        unlistenMicPermRef.current = await listen<string>('stt://mic-permission', (e) => {
+          const status = (e.payload || '').toString();
+          console.log('🎙️ Mic permission:', status);
+          if (status === 'granted' && shouldRetryRef.current) {
+            setWaitingForPermission(false);
+            shouldRetryRef.current = false;
+            setTimeout(() => toggleListening(), 500);
+          } else if (status === 'denied') {
+            setWaitingForPermission(false);
+            shouldRetryRef.current = false;
+          }
+        });
+
+       
+        unlistenSpeechAuthRef.current = await listen<string>('stt://speech-auth', (e) => {
+          // Demo
+        });
+
+      } catch (e) {
+        console.error('Failed to set up STT event listeners:', e);
+      }
+    };
+
+    setupListeners();
+
+    // Очистка при размонтировании
+    return () => {
+      invoke('stt_stop').catch(() => { });
+      unlistenPartRef.current?.();
+      unlistenMicPermRef.current?.();
+      unlistenSpeechAuthRef.current?.();
+    };
+  }, []);
+
+  const toggleListening = async () => {
+    if (startingRef.current) return;
+    startingRef.current = true;
+
+    try {
+      if (isListening || waitingForPermission) {
+        // === ОСТАНОВКА ===
+        await invoke('stt_stop');
+        setIsListening(false);
+        setWaitingForPermission(false);
+        shouldRetryRef.current = false;
+      } else {
+        sttPartialsRef.current = '';
+        setInputValue('');
+        
+        try {
+          await invoke('stt_start');
+          setIsListening(true);
+          setWaitingForPermission(false);
+          shouldRetryRef.current = false;
+        } catch (e) {
+          const errorMsg = (e as Error).toString();
+          console.error('stt_start failed:', errorMsg);
+          if (errorMsg.includes('permission requested') || errorMsg.includes('authorization requested')) {
+            setWaitingForPermission(true);
+            shouldRetryRef.current = true;
+          } else {
+            setIsListening(false);
+            setWaitingForPermission(false);
+          }
+        }
+      }
+    } finally {
+      startingRef.current = false;
+    }
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -27,11 +128,17 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (inputValue.trim() && !isLoading) {
       onSendMessage(inputValue);
-      setInputValue('');
+      setInputValue(''); // Очищаем поле
+      if (isListening || waitingForPermission) {
+        await invoke('stt_stop').catch(() => {});
+        setIsListening(false);
+        setWaitingForPermission(false);
+        shouldRetryRef.current = false;
+      }
     }
   };
 
@@ -96,7 +203,7 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
         ))}
         {isLoading && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-brand-green-dark text-brand-green font-bold text-sm flex-shrink-0 flex items-center justify-center">A</div>
+            <div className="w-8 h-8 rounded-full bg-brand-green-dark text-brand-green font-bold text-sm shrink-0 flex items-center justify-center">A</div>
             <div className="max-w-[80%] p-3 rounded-lg bg-brand-bg-dark text-brand-text-light">
               <Loader2 className="w-5 h-5 animate-spin text-brand-text-dim" />
             </div>
@@ -112,14 +219,14 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
       <form
         onSubmit={handleSubmit}
         className="flex items-center gap-3 bg-[#0B0B0B] rounded-xl pl-4 py-1 pr-1"
-        >
+      >
         <ChevronRight className="w-5 h-5 text-brand-text-dim" />
         <input
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Enter a prompt here"
+          placeholder={isListening ? "Listening..." : "Enter a prompt here"}
           className="
             flex-1 bg-transparent
             text-brand-text-light
@@ -128,8 +235,25 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
           "
           disabled={isLoading}
         />
-        {/* TODO: Add cpeech to text */}
-        <Button variant="icon" type="submit" className="bg-linear-to-r from-[#C5FC48] to-[#8ED818]" disabled={!inputValue.trim() || isLoading}>
+        <button
+          type="button"
+          onClick={toggleListening}
+          disabled={isLoading || startingRef.current}
+          className={`
+            p-2 rounded-lg transition-colors cursor-pointer 
+            ${isListening || waitingForPermission
+              ? 'text-red-500 bg-red-500/10'
+              : 'text-brand-text-dim hover:bg-brand-bg-dark hover:text-brand-text-light'
+            }
+          `}
+        >
+          {isListening || waitingForPermission ? (
+            <StopCircle className="w-5 h-5" /> 
+          ) : (
+            <Mic className="w-5 h-5" />
+          )}
+        </button>
+        <Button variant="icon" type="submit" className=" cursor-pointer bg-linear-to-r from-[#C5FC48] to-[#8ED818]" disabled={!inputValue.trim() || isLoading}>
           <ArrowUp className='w-4 h-4 text-[#121212] stroke-3' />
         </Button>
       </form>
