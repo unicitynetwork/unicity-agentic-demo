@@ -12,19 +12,20 @@ export const BlankState: React.FC<BlankStateProps> = ({
 }) => {
   const { isListening, waitingForPermission, partialTranscript, lastTranscript, startListening, stopListening, clearLastTranscript } = useSTT();
 
-  const handleToggleListening = async () => {
-    if (isListening || waitingForPermission) {
-      await stopListening();
-    } else {
-      await startListening();
-    }
-  };
+  // const handleToggleListening = async () => {
+  //   if (isListening || waitingForPermission) {
+  //     await stopListening();
+  //   } else {
+  startListening();
+  // }
+  // };
 
   // Handle last transcript (when speech recognition completes)
   useEffect(() => {
     if (lastTranscript) {
       // Call the onTranscript prop with the completed transcript
       onTranscript(lastTranscript);
+      stopListening();
       clearLastTranscript();
     }
   }, [lastTranscript, onTranscript]);
@@ -35,10 +36,10 @@ export const BlankState: React.FC<BlankStateProps> = ({
         {/* Title */}
         <div className="space-y-4">
           <h1 className="text-4xl font-light text-white/90">
-            Welcome to Unicity
+            Nice to meet you.
           </h1>
           <p className="text-lg text-white/60">
-            I'm here to help. Just speak to me naturally.
+            Just speak to me naturally.
           </p>
         </div>
 
@@ -70,7 +71,7 @@ export const BlankState: React.FC<BlankStateProps> = ({
           {/* Status Text */}
           <div className="space-y-2">
             <p className="text-white/80 font-medium">
-              {isListening ? 'Listening...' : 'Click to start speaking'}
+              {isListening ? 'Listening...' : 'Just give me a moment to prepare.'}
             </p>
             
             {/* Partial Transcript */}
@@ -82,19 +83,19 @@ export const BlankState: React.FC<BlankStateProps> = ({
           </div>
         </div>
 
-        {/* Control Button */}
-        <Button
-          onClick={handleToggleListening}
-          className={`
-            px-8 py-4 text-lg font-medium
-            ${isListening || waitingForPermission
-              ? 'bg-red-500 hover:bg-red-600 text-white'
-              : 'bg-gradient-to-r from-[#C5FC48] to-[#8ED818] text-black hover:from-[#8ED818] hover:to-[#C5FC48]'
-            }
-          `}
-        >
-          {isListening || waitingForPermission ? 'Stop Listening' : 'Start Speaking'}
-        </Button>
+        {/*/!* Control Button *!/*/}
+        {/*<Button*/}
+        {/*  onClick={handleToggleListening}*/}
+        {/*  className={`*/}
+        {/*    px-8 py-4 text-lg font-medium*/}
+        {/*    ${isListening || waitingForPermission*/}
+        {/*      ? 'bg-red-500 hover:bg-red-600 text-white'*/}
+        {/*      : 'bg-gradient-to-r from-[#C5FC48] to-[#8ED818] text-black hover:from-[#8ED818] hover:to-[#C5FC48]'*/}
+        {/*    }*/}
+        {/*  `}*/}
+        {/*>*/}
+        {/*  {isListening || waitingForPermission ? 'Stop Listening' : 'Start Speaking'}*/}
+        {/*</Button>*/}
 
         {/* Example Commands */}
         <div className="space-y-3 text-left">

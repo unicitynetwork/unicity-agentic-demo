@@ -113,7 +113,7 @@ INPUT: "{}"
   "pipeline": [
     {{
       "step": 1,
-      "action": "swap|ping|check_balance",
+      "action": "swap|ping",
       "from_asset": "asset_symbol",
       "to_asset": "asset_symbol",
       "amount": "decimal_number or 'previous_output' or 'user_specified'",
@@ -155,7 +155,6 @@ INPUT: "{}"
 **METHOD PATTERNS** - Generate expected method names:
 - swap_X_to_Y → "swap_{{from}}_{{to}}"
 - ping → "ping"
-- balance → "check_balance"
 
 **UI COMPONENT SUGGESTIONS** - Analyze user intent and suggest relevant UI components:
 - "chat screen", "talk to you", "conversation" → chat_screen
@@ -302,17 +301,7 @@ Input: "I want to see crypto balances"
 {{
   "tool": "transaction_flow",
   "intent": "User wants to view their cryptocurrency portfolio and balances",
-  "pipeline": [
-    {{
-      "step": 1,
-      "action": "check_balance",
-      "from_asset": null,
-      "to_asset": null,
-      "amount": "user_specified",
-      "semantic_hook": "retrieve current cryptocurrency balances from portfolio",
-      "method_pattern": "check_balance"
-    }}
-  ],
+  "pipeline": [],
   "expected_outcome": "display of all cryptocurrency balances",
   "ui_suggestions": [
     {{

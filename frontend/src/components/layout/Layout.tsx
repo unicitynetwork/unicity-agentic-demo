@@ -16,21 +16,25 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidebar, showSidebar }
 
         <main
           className={`
-            flex-1 
-            grid grid-cols-1 
+            flex-1
+            grid grid-cols-1
             gap-8 py-10
             ${showSidebar ? 'lg:grid-cols-[1fr_400px]' : 'lg:grid-cols-1'}
           `}
         >
-          <motion.div layout transition={{ duration: 0.4, ease: 'easeInOut' }} className="flex min-w-0 flex-col gap-8 h-full">
+          <motion.div
+            layout
+            transition={{ duration: 0.4, ease: 'easeInOut' }}
+            className="flex min-w-0 flex-col gap-8 h-full overflow-hidden"
+          >
             {children}
           </motion.div>
 
           {showSidebar && (
-            <motion.aside 
-              layout 
-              transition={{ duration: 0.4, ease: 'easeInOut' }} 
-              className="flex flex-col gap-6"
+            <motion.aside
+              layout
+              transition={{ duration: 0.4, ease: 'easeInOut' }}
+              className="flex flex-col gap-6 h-full"
             >
               {sidebar}
             </motion.aside>

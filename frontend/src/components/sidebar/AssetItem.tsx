@@ -14,11 +14,11 @@ export const AssetItem: React.FC<AssetItemProps> = ({ asset }) => {
       last:pb-0
     ">
       <div className="flex items-center gap-3">
-        <img
-          src="/icons/unicityLogo.svg"
-          alt={`${asset.asset_id} icon`}
-          className="w-8 h-8 rounded-full bg-brand-bg-dark"
-        />
+        {/*<img*/}
+        {/*  src="/icons/unicityLogo.svg"*/}
+        {/*  alt={`${asset.asset_id} icon`}*/}
+        {/*  className="w-8 h-8 rounded-full bg-brand-bg-dark"*/}
+        {/*/>*/}
         <div>
           <p className="text-sm font-medium text-brand-text-light">{asset.asset_id}</p>
           <p className="text-xs text-brand-text-dim">{asset.asset_id}</p>

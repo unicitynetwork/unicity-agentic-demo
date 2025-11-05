@@ -19,12 +19,12 @@ function App() {
     balances: [],
     agents: [],
     messages: [
-      {
-        id: '1',
-        type: 'assistant',
-        content: 'Welcome to Unicity AgentSphere. Connecting to backend...',
-        timestamp: new Date(),
-      }
+      // {
+      //   id: '1',
+      //   type: 'assistant',
+      //   content: 'Welcome to Unicity AgentSphere. Connecting to backend...',
+      //   timestamp: new Date(),
+      // }
     ],
     isLoading: false,
     error: undefined,
@@ -56,10 +56,10 @@ function App() {
           balances,
           agents,
           isLoading: false,
-          messages: [
-            ...prev.messages,
-            { id: '2', type: 'assistant', content: 'Connection successful. Agents loaded.', timestamp: new Date() }
-          ]
+          // messages: [
+          //   ...prev.messages,
+          //   { id: '2', type: 'assistant', content: 'Connection successful. Agents loaded.', timestamp: new Date() }
+          // ]
         }));
       } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -243,55 +243,58 @@ function App() {
             )}
           </AnimatePresence>}
         >
-          <AnimatePresence>
-            {showAgents && (
-              <motion.div
-                key="agents"
-                layout
-                initial={{ opacity: 0, y: -30 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -30 }}
-                transition={{ duration: 0.4, ease: 'easeInOut' }}
-                className="flex flex-col gap-5 min-h-0"
-              >
-                <AgentSection title="Public Agents" subTitle="Agents from the community" agents={publicAgents} showAddButton/>
-                <AgentSection title="Private Agents" subTitle="Your private agents" agents={privateAgents} showAddButton />
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <AnimatePresence>
-            {showConsole && (
-              <motion.div
-                key="console"
-                layout
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, ease: 'easeInOut' }}
-                className="flex flex-col flex-1 h-full min-h-[300px]"
-              >
-                <ConsoleWindow
-                  messages={appState.messages}
-                  isLoading={appState.isLoading}
-                  error={appState.error}
-                  onSendMessage={handleSendMessage}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div className="flex flex-col h-full gap-6">
+            {/* Agents Section - Always at top when shown */}
+            <AnimatePresence>
+              {showAgents && (
+                <motion.div
+                  key="agents"
+                  layout
+                  initial={{ opacity: 0, y: -30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -30 }}
+                  transition={{ duration: 0.4, ease: 'easeInOut' }}
+                  className="flex flex-col gap-5 flex-shrink-0"
+                >
+                  <AgentSection title="Public Agents" subTitle="Agents from the community" agents={publicAgents} showAddButton/>
+                  <AgentSection title="Private Agents" subTitle="Your private agents" agents={privateAgents} showAddButton />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-          <AnimatePresence>
-            {showConsole && ( 
-              <motion.div
-                key="active-agents"
-                layout
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <ActiveAgentsBar />
-              </motion.div>
-            )}
-          </AnimatePresence>
+            {/* Console Section - Fixed height with scrollbar */}
+            <AnimatePresence>
+              {showConsole && (
+                <motion.div
+                  key="console"
+                  layout
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, ease: 'easeInOut' }}
+                  className="flex flex-col"
+                >
+                  <ConsoleWindow
+                    messages={appState.messages}
+                    isLoading={appState.isLoading}
+                    error={appState.error}
+                    onSendMessage={handleSendMessage}
+                  />
+                  
+                  {/* Active Agents Bar - Fixed at bottom of console */}
+                  <motion.div
+                    key="active-agents"
+                    layout
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="mt-4 flex-shrink-0"
+                  >
+                    <ActiveAgentsBar />
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </Layout>
       )}
       </div>

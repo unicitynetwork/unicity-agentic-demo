@@ -59,23 +59,23 @@ pub async fn initialize_agents(state: &AppState) -> anyhow::Result<()> {
         .lock()
         .map_err(|_| anyhow::Error::msg("Couldn't get lock on Memory Index"))?;
 
-    // // Register Ping Agent
-    // unicity_agentic_demo::agents::ping::Ping::create_agent(
-    //     &state.queries,
-    //     state.embedding.clone(),
-    //     &mut agent_index,
-    // )
-    // .await?;
-    // info!("✅ Ping Agent registered");
-    //
-    // // Register Swap Agent
-    // unicity_agentic_demo::agents::swap::Swap::create_agent(
-    //     &state.queries,
-    //     state.embedding.clone(),
-    //     &mut agent_index,
-    // )
-    // .await?;
-    // info!("✅ Swap Agent registered");
+    // Register Ping Agent
+    unicity_agentic_demo::agents::ping::Ping::create_agent(
+        &state.queries,
+        state.embedding.clone(),
+        &mut agent_index,
+    )
+    .await?;
+    info!("✅ Ping Agent registered");
+
+    // Register Swap Agent
+    unicity_agentic_demo::agents::swap::Swap::create_agent(
+        &state.queries,
+        state.embedding.clone(),
+        &mut agent_index,
+    )
+    .await?;
+    info!("✅ Swap Agent registered");
 
     Ok(())
 }
@@ -356,7 +356,7 @@ async fn generate_execution_summary(
 
     let prompt = format!(
         r#"
-You are explaining transaction execution results to a user.
+You are explaining execution results to a user.
 Provide a natural, clear explanation of what happened.
 
 IMPORTANT: All amounts in this system use 8 decimal places internally. When explaining amounts to users, use human-readable decimal format (e.g., "100" instead of "100.00000000", "0.5" instead of "0.50000000").
@@ -370,7 +370,10 @@ When mentioning amounts, format them in a user-friendly way:
 - Use "0.5" instead of "0.50000000"
 - Use "1.23456789" for amounts with non-zero fractional parts
 
-Be concise but comprehensive."#,
+If no steps were provided, just simply summarize the overall result as if you did it.
+For example, with a balance UI show, you should say "Here you go! Your balances should be visable now."
+
+Use a natural, grounded personable tone. It should sound like something a thoughtful human would actually say."#,
         execution_json, original_query
     );
 

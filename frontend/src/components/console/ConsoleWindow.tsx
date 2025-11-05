@@ -91,8 +91,8 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
   };
 
   return (
-    <div className="p-3 bg-[#101010] border-[1.5px] border-[#1D1D1D] rounded-xl flex flex-col overflow-hidden">
-      <div className="p-3 flex-1 space-y-2 overflow-y-auto h-40">
+    <div className="p-3 bg-[#101010] border-[1.5px] border-[#1D1D1D] rounded-xl flex flex-col overflow-hidden h-[500px]">
+      <div className="p-3 flex-1 space-y-2 overflow-y-auto min-h-0">
         {messages.map(msg => (
           <div
             key={msg.id}
