@@ -2,8 +2,7 @@ import { ChevronRight, ArrowUp, Loader2, StopCircle, Mic } from 'lucide-react';
 import { Button } from '../common/Button';
 import { useEffect, useRef, useState } from 'react';
 import { ChatMessage } from '../../types';
-import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { useSTT } from '../../contexts/STTContext';
 
 interface ConsoleWindowProps {
   messages: ChatMessage[];
@@ -21,102 +20,43 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
 
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [isListening, setIsListening] = useState(false);
-  const [waitingForPermission, setWaitingForPermission] = useState(false);
-  const sttPartialsRef = useRef<string>('');
+  const {
+    isListening,
+    waitingForPermission,
+    partialTranscript,
+    lastTranscript,
+    startListening,
+    stopListening,
+    clearLastTranscript
+  } = useSTT();
 
-  const unlistenPartRef = useRef<UnlistenFn | null>(null);
-  const unlistenMicPermRef = useRef<UnlistenFn | null>(null);
-  const unlistenSpeechAuthRef = useRef<UnlistenFn | null>(null);
-  const startingRef = useRef(false); // Флаг для предотвращения двойного клика
-  const shouldRetryRef = useRef(false);
-
+  // Update input value when partial transcript changes
   useEffect(() => {
-    const setupListeners = async () => {
-      try {
-        // Частичный результат речи
-        unlistenPartRef.current = await listen<string>('stt://partial', (e) => {
-          const txt = (e.payload || '').trim();
-          console.log('📝 STT Partial:', txt);
-          const current = sttPartialsRef.current;
-          let newText = current;
-          if (!current.includes(txt)) {
-            newText = current ? `${current} ${txt}` : txt;
-          }
-          sttPartialsRef.current = newText;
-          setInputValue(newText);
-          if (!isListening) setIsListening(true);
-        });
+    if (partialTranscript) {
+      setInputValue(partialTranscript);
+    }
+  }, [partialTranscript]);
 
-
-        unlistenMicPermRef.current = await listen<string>('stt://mic-permission', (e) => {
-          const status = (e.payload || '').toString();
-          console.log('🎙️ Mic permission:', status);
-          if (status === 'granted' && shouldRetryRef.current) {
-            setWaitingForPermission(false);
-            shouldRetryRef.current = false;
-            setTimeout(() => toggleListening(), 500);
-          } else if (status === 'denied') {
-            setWaitingForPermission(false);
-            shouldRetryRef.current = false;
-          }
-        });
-
-       
-        unlistenSpeechAuthRef.current = await listen<string>('stt://speech-auth', (e) => {
-          // Demo
-        });
-
-      } catch (e) {
-        console.error('Failed to set up STT event listeners:', e);
-      }
-    };
-
-    setupListeners();
-
-    // Очистка при размонтировании
-    return () => {
-      invoke('stt_stop').catch(() => { });
-      unlistenPartRef.current?.();
-      unlistenMicPermRef.current?.();
-      unlistenSpeechAuthRef.current?.();
-    };
-  }, []);
+  // Handle last transcript (when speech recognition completes)
+  useEffect(() => {
+    if (lastTranscript && !isLoading) {
+      // Automatically send the completed transcript to the LLM
+      onSendMessage(lastTranscript);
+      // Clear the input field after sending
+      setInputValue('');
+      // Stop listening after sending the message
+      stopListening();
+      // Clear the last transcript to prevent re-sending
+      clearLastTranscript();
+    }
+  }, [lastTranscript, onSendMessage, isLoading, stopListening, setInputValue, clearLastTranscript]);
 
   const toggleListening = async () => {
-    if (startingRef.current) return;
-    startingRef.current = true;
-
-    try {
-      if (isListening || waitingForPermission) {
-        // === ОСТАНОВКА ===
-        await invoke('stt_stop');
-        setIsListening(false);
-        setWaitingForPermission(false);
-        shouldRetryRef.current = false;
-      } else {
-        sttPartialsRef.current = '';
-        setInputValue('');
-        
-        try {
-          await invoke('stt_start');
-          setIsListening(true);
-          setWaitingForPermission(false);
-          shouldRetryRef.current = false;
-        } catch (e) {
-          const errorMsg = (e as Error).toString();
-          console.error('stt_start failed:', errorMsg);
-          if (errorMsg.includes('permission requested') || errorMsg.includes('authorization requested')) {
-            setWaitingForPermission(true);
-            shouldRetryRef.current = true;
-          } else {
-            setIsListening(false);
-            setWaitingForPermission(false);
-          }
-        }
-      }
-    } finally {
-      startingRef.current = false;
+    if (isListening || waitingForPermission) {
+      await stopListening();
+    } else {
+      setInputValue('');
+      await startListening();
     }
   };
 
@@ -132,12 +72,9 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
     e.preventDefault();
     if (inputValue.trim() && !isLoading) {
       onSendMessage(inputValue);
-      setInputValue(''); // Очищаем поле
+      setInputValue(''); // Clear the input field
       if (isListening || waitingForPermission) {
-        await invoke('stt_stop').catch(() => {});
-        setIsListening(false);
-        setWaitingForPermission(false);
-        shouldRetryRef.current = false;
+        await stopListening();
       }
     }
   };
@@ -238,9 +175,9 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
         <button
           type="button"
           onClick={toggleListening}
-          disabled={isLoading || startingRef.current}
+          disabled={isLoading}
           className={`
-            p-2 rounded-lg transition-colors cursor-pointer 
+            p-2 rounded-lg transition-colors cursor-pointer
             ${isListening || waitingForPermission
               ? 'text-red-500 bg-red-500/10'
               : 'text-brand-text-dim hover:bg-brand-bg-dark hover:text-brand-text-light'
@@ -248,7 +185,7 @@ export const ConsoleWindow: React.FC<ConsoleWindowProps> = ({
           `}
         >
           {isListening || waitingForPermission ? (
-            <StopCircle className="w-5 h-5" /> 
+            <StopCircle className="w-5 h-5" />
           ) : (
             <Mic className="w-5 h-5" />
           )}

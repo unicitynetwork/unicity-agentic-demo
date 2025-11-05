@@ -1,74 +1,33 @@
 import { Mic, MicOff } from 'lucide-react';
 import { Button } from '../common/Button';
-import { useState, useEffect, useRef } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { useState, useEffect } from 'react';
+import { useSTT } from '../../contexts/STTContext';
 
 interface BlankStateProps {
-  onStartListening: () => void;
-  onStopListening: () => void;
   onTranscript: (text: string) => void;
 }
 
 export const BlankState: React.FC<BlankStateProps> = ({
-  onStartListening,
-  onStopListening,
   onTranscript
 }) => {
-  const [isListening, setIsListening] = useState(false);
-  const [partialTranscript, setPartialTranscript] = useState('');
-  const [lastTranscript, setLastTranscript] = useState('');
-  const currentTranscriptRef = useRef('');
+  const { isListening, waitingForPermission, partialTranscript, lastTranscript, startListening, stopListening, clearLastTranscript } = useSTT();
 
+  const handleToggleListening = async () => {
+    if (isListening || waitingForPermission) {
+      await stopListening();
+    } else {
+      await startListening();
+    }
+  };
+
+  // Handle last transcript (when speech recognition completes)
   useEffect(() => {
-    let unlistenFn: (() => void) | null = null;
-    
-    const setupListener = async () => {
-      // Listen for STT partial transcripts
-      unlistenFn = await listen<string>('stt://partial', (event) => {
-        const text = (event.payload || '').trim();
-        console.log('📝 Partial:', text);
-        
-        const current = currentTranscriptRef.current;
-        
-        // Only append if this is new text (not already contained in current)
-        let newText = current;
-        if (!current.includes(text)) {
-          newText = current ? `${current} ${text}` : text;
-        }
-        
-        currentTranscriptRef.current = newText;
-        setPartialTranscript(newText);
-        
-        // Only process if it's different from last transcript and has meaningful content
-        setLastTranscript(prevLast => {
-          if (newText !== prevLast && newText.trim().length > 3) {
-            // Check for sentence end markers or natural pause indicators
-            const hasEndMarker = newText.includes('.') || newText.includes('?') || newText.includes('!') ||
-                               newText.includes(' I want ') || newText.includes(' Show me ') ||
-                               newText.includes(' I need ') || newText.includes(' Can you ');
-            
-            if (hasEndMarker) {
-              onTranscript(newText);
-              setPartialTranscript('');
-              currentTranscriptRef.current = ''; // Reset the ref
-              return newText; // Update last transcript
-            }
-          }
-          return prevLast; // Keep previous last transcript
-        });
-      });
-    };
-
-    setupListener();
-
-    // Cleanup function
-    return () => {
-      if (unlistenFn) {
-        unlistenFn();
-        unlistenFn = null;
-      }
-    };
-  }, [onTranscript]); // Only depend on onTranscript, not on state variables
+    if (lastTranscript) {
+      // Call the onTranscript prop with the completed transcript
+      onTranscript(lastTranscript);
+      clearLastTranscript();
+    }
+  }, [lastTranscript, onTranscript]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0A0A0A] to-[#1A1A1A] flex items-center justify-center">
@@ -103,7 +62,7 @@ export const BlankState: React.FC<BlankStateProps> = ({
             {isListening && (
               <>
                 <div className="absolute inset-0 rounded-full border-2 border-[#C5FC48] animate-ping" />
-                <div className="absolute inset-0 rounded-full border-2 border-[#8ED818] animate-ping animation-delay-200" />
+                  <div className="absolute inset-0 rounded-full border-2 border-[#8ED818] animate-ping animation-delay-200" />
               </>
             )}
           </div>
@@ -125,24 +84,16 @@ export const BlankState: React.FC<BlankStateProps> = ({
 
         {/* Control Button */}
         <Button
-          onClick={async () => {
-            if (isListening) {
-              await onStopListening();
-              setIsListening(false);
-            } else {
-              await onStartListening();
-              setIsListening(true);
-            }
-          }}
+          onClick={handleToggleListening}
           className={`
             px-8 py-4 text-lg font-medium
-            ${isListening
+            ${isListening || waitingForPermission
               ? 'bg-red-500 hover:bg-red-600 text-white'
               : 'bg-gradient-to-r from-[#C5FC48] to-[#8ED818] text-black hover:from-[#8ED818] hover:to-[#C5FC48]'
             }
           `}
         >
-          {isListening ? 'Stop Listening' : 'Start Speaking'}
+          {isListening || waitingForPermission ? 'Stop Listening' : 'Start Speaking'}
         </Button>
 
         {/* Example Commands */}

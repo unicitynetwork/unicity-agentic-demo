@@ -8,6 +8,7 @@ import { ConsoleWindow } from './components/console/ConsoleWindow';
 import { ActiveAgentsBar } from './components/console/ActiveAgentsBar';
 import { AgentSection } from './components/agents/AgentSection';
 import SideBar from './components/sidebar/SideBar';
+import { STTProvider } from './contexts/STTContext';
 
 import { AppState, ChatMessage, BalanceInfo, AgentInfo } from './types';
 import { publicAgents, privateAgents } from './mocks/agents';
@@ -110,9 +111,54 @@ function App() {
         timestamp: new Date(),
         steps: response.steps,
         error: response.error,
+        uiSuggestions: response.ui_suggestions,
       };
 
       const balances = await invoke<BalanceInfo[]>('get_all_balances');
+
+      // Process UI suggestions automatically to change screens
+      try {
+        if (response.ui_suggestions && response.ui_suggestions.length > 0) {
+          // Process the highest priority suggestion first
+          const topSuggestion = response.ui_suggestions.sort((a: any, b: any) => b.priority - a.priority)[0];
+          const componentType = topSuggestion.component_type;
+          
+          switch (componentType) {
+            case 'chat_screen':
+              setShowSplash(false);
+              setShowConsole(true);
+              break;
+            case 'crypto_balances':
+              setShowSplash(false);
+              setShowSidebar(true);
+              break;
+            case 'agent_list':
+              setShowSplash(false);
+              setShowAgents(true);
+              break;
+            case 'transaction_history':
+              // Could add a transaction history view in the future
+              setShowSplash(false);
+              setShowConsole(true);
+              break;
+            case 'voice_interface':
+              // Could trigger voice interface
+              setShowSplash(false);
+              setShowConsole(true);
+              break;
+            case 'settings_panel':
+              // Could add a settings panel in the future
+              setShowSplash(false);
+              setShowConsole(true);
+              break;
+            default:
+              console.log('Unknown suggestion type:', componentType);
+          }
+        }
+      } catch (error) {
+        console.error('Error processing UI suggestions:', error);
+        // Don't let UI suggestion errors break the main flow
+      }
 
       setAppState(prev => ({
         ...prev,
@@ -162,25 +208,24 @@ function App() {
 
 
   return (
-    <div className='bg-linear-to-b from-[#101010] to-[#0B0B0B]'>
-      <SimButtons />
+    <STTProvider>
+      <div className='bg-linear-to-b from-[#101010] to-[#0B0B0B]'>
+        {/*<SimButtons />*/}
 
-      <AnimatePresence>
-        {showSplash && (
-          <motion.div
-            key="splash"
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.3 }}
-          >
-            <BlankState
-              onStartListening={() => invoke('stt_start')}
-              onStopListening={() => invoke('stt_stop')}
-              onTranscript={(text) => handleSendMessage(text)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {!showSplash && (
+        <AnimatePresence>
+          {showSplash && (
+            <motion.div
+              key="splash"
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.3 }}
+            >
+              <BlankState
+                onTranscript={(text) => handleSendMessage(text)}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {!showSplash && (
         <Layout
           showSidebar={showSidebar}
           sidebar={<AnimatePresence>
@@ -216,8 +261,8 @@ function App() {
           </AnimatePresence>
           <AnimatePresence>
             {showConsole && (
-              <motion.div 
-                key="console" 
+              <motion.div
+                key="console"
                 layout
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -249,7 +294,8 @@ function App() {
           </AnimatePresence>
         </Layout>
       )}
-    </div>
+      </div>
+    </STTProvider>
   );
 }
 

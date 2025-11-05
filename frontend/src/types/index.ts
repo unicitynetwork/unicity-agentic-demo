@@ -58,6 +58,7 @@ export interface ChatMessage {
   timestamp: Date;
   steps?: ExecutionStep[];
   error?: string;
+  uiSuggestions?: UIComponentSuggestion[];
 }
 
 export interface AppState {

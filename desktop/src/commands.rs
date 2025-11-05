@@ -59,23 +59,23 @@ pub async fn initialize_agents(state: &AppState) -> anyhow::Result<()> {
         .lock()
         .map_err(|_| anyhow::Error::msg("Couldn't get lock on Memory Index"))?;
 
-    // Register Ping Agent
-    unicity_agentic_demo::agents::ping::Ping::create_agent(
-        &state.queries,
-        state.embedding.clone(),
-        &mut agent_index,
-    )
-    .await?;
-    info!("✅ Ping Agent registered");
-
-    // Register Swap Agent
-    unicity_agentic_demo::agents::swap::Swap::create_agent(
-        &state.queries,
-        state.embedding.clone(),
-        &mut agent_index,
-    )
-    .await?;
-    info!("✅ Swap Agent registered");
+    // // Register Ping Agent
+    // unicity_agentic_demo::agents::ping::Ping::create_agent(
+    //     &state.queries,
+    //     state.embedding.clone(),
+    //     &mut agent_index,
+    // )
+    // .await?;
+    // info!("✅ Ping Agent registered");
+    //
+    // // Register Swap Agent
+    // unicity_agentic_demo::agents::swap::Swap::create_agent(
+    //     &state.queries,
+    //     state.embedding.clone(),
+    //     &mut agent_index,
+    // )
+    // .await?;
+    // info!("✅ Swap Agent registered");
 
     Ok(())
 }
@@ -192,11 +192,22 @@ pub async fn process_query(
 
             let ui_suggestions = transaction_flow.ui_suggestions
                 .into_iter()
-                .map(|suggestion| UIComponentSuggestion {
-                    component_type: format!("{:?}", suggestion.component_type).to_lowercase(),
-                    title: suggestion.title,
-                    description: suggestion.description,
-                    priority: suggestion.priority,
+                .map(|suggestion| {
+                    let component_type_str = match suggestion.component_type {
+                        unicity_agentic_demo::flow::parser::UIComponentType::ChatScreen => "chat_screen",
+                        unicity_agentic_demo::flow::parser::UIComponentType::CryptoBalances => "crypto_balances",
+                        unicity_agentic_demo::flow::parser::UIComponentType::AgentList => "agent_list",
+                        unicity_agentic_demo::flow::parser::UIComponentType::TransactionHistory => "transaction_history",
+                        unicity_agentic_demo::flow::parser::UIComponentType::VoiceInterface => "voice_interface",
+                        unicity_agentic_demo::flow::parser::UIComponentType::SettingsPanel => "settings_panel",
+                    };
+                    
+                    UIComponentSuggestion {
+                        component_type: component_type_str.to_string(),
+                        title: suggestion.title,
+                        description: suggestion.description,
+                        priority: suggestion.priority,
+                    }
                 })
                 .collect();
 
